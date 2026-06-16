@@ -149,6 +149,12 @@ export interface CustomerRecord {
   relocationRequest?: RelocationInfo
 }
 
+export interface PaymentHistoryEntry {
+  id: string
+  amount: number
+  date: string
+}
+
 export interface FeeRecord {
   id: string
   plotId: string
@@ -161,4 +167,5 @@ export interface FeeRecord {
   paidAmount: number
   status: FeeStatus
   reminderSent: boolean
+  paymentHistory: PaymentHistoryEntry[]
 }

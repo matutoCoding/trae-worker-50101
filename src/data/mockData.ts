@@ -143,14 +143,14 @@ export const customerRecords: CustomerRecord[] = [
 ]
 
 export const feeRecords: FeeRecord[] = [
-  { id: 'fee-1', plotId: 'plot-1', plotPosition: '松柏园-1排1号', contractNo: 'CT20240001', feeType: 'management', amount: 1200, dueDate: '2025-07-15', paidAmount: 0, status: 'unpaid', reminderSent: false },
-  { id: 'fee-2', plotId: 'plot-2', plotPosition: '松柏园-1排2号', contractNo: 'CT20240002', feeType: 'management', amount: 1200, dueDate: '2025-06-20', paidAmount: 0, status: 'overdue', reminderSent: true },
-  { id: 'fee-3', plotId: 'plot-9', plotPosition: '梅花园-1排1号', contractNo: 'CT20240003', feeType: 'management', amount: 800, dueDate: '2025-08-10', paidAmount: 800, status: 'paid', paidDate: '2025-06-01', reminderSent: true },
-  { id: 'fee-4', plotId: 'plot-49', plotPosition: '兰亭园-1排1号', contractNo: 'CT20240004', feeType: 'management', amount: 2400, dueDate: '2025-07-05', paidAmount: 0, status: 'unpaid', reminderSent: false },
-  { id: 'fee-5', plotId: 'plot-3', plotPosition: '松柏园-1排3号', contractNo: 'CT20240005', feeType: 'management', amount: 1200, dueDate: '2025-06-30', paidAmount: 600, status: 'partial', reminderSent: true },
-  { id: 'fee-6', plotId: 'plot-50', plotPosition: '兰亭园-1排2号', contractNo: 'CT20240007', feeType: 'management', amount: 2400, dueDate: '2025-07-14', paidAmount: 0, status: 'unpaid', reminderSent: false },
-  { id: 'fee-7', plotId: 'plot-85', plotPosition: '竹韵园-1排1号', contractNo: 'CT20240008', feeType: 'management', amount: 1200, dueDate: '2025-08-30', paidAmount: 1200, status: 'paid', paidDate: '2025-06-10', reminderSent: true },
-  { id: 'fee-8', plotId: 'plot-1', plotPosition: '松柏园-1排1号', contractNo: 'CT20240001', feeType: 'burial', amount: 3000, dueDate: '2025-01-20', paidAmount: 3000, status: 'paid', paidDate: '2025-01-18', reminderSent: false },
-  { id: 'fee-9', plotId: 'plot-9', plotPosition: '梅花园-1排1号', contractNo: 'CT20240003', feeType: 'inscription', amount: 1500, dueDate: '2025-02-28', paidAmount: 1500, status: 'paid', paidDate: '2025-02-25', reminderSent: false },
-  { id: 'fee-10', plotId: 'plot-49', plotPosition: '兰亭园-1排1号', contractNo: 'CT20240004', feeType: 'relocation', amount: 5000, dueDate: '2025-04-05', paidAmount: 5000, status: 'paid', paidDate: '2025-04-03', reminderSent: false },
+  { id: 'fee-1', plotId: 'plot-1', plotPosition: '松柏园-1排1号', contractNo: 'CT20240001', feeType: 'management', amount: 1200, dueDate: '2025-07-15', paidAmount: 0, status: 'unpaid', reminderSent: false, paymentHistory: [] },
+  { id: 'fee-2', plotId: 'plot-2', plotPosition: '松柏园-1排2号', contractNo: 'CT20240002', feeType: 'management', amount: 1200, dueDate: '2025-06-20', paidAmount: 0, status: 'overdue', reminderSent: true, paymentHistory: [] },
+  { id: 'fee-3', plotId: 'plot-9', plotPosition: '梅花园-1排1号', contractNo: 'CT20240003', feeType: 'management', amount: 800, dueDate: '2025-08-10', paidAmount: 800, status: 'paid', paidDate: '2025-06-01', reminderSent: true, paymentHistory: [{ id: 'ph-3', amount: 800, date: '2025-06-01' }] },
+  { id: 'fee-4', plotId: 'plot-49', plotPosition: '兰亭园-1排1号', contractNo: 'CT20240004', feeType: 'management', amount: 2400, dueDate: '2025-07-05', paidAmount: 0, status: 'unpaid', reminderSent: false, paymentHistory: [] },
+  { id: 'fee-5', plotId: 'plot-3', plotPosition: '松柏园-1排3号', contractNo: 'CT20240005', feeType: 'management', amount: 1200, dueDate: '2025-06-30', paidAmount: 600, status: 'partial', reminderSent: true, paymentHistory: [{ id: 'ph-5', amount: 600, date: '2025-06-05' }] },
+  { id: 'fee-6', plotId: 'plot-50', plotPosition: '兰亭园-1排2号', contractNo: 'CT20240007', feeType: 'management', amount: 2400, dueDate: '2025-07-14', paidAmount: 0, status: 'unpaid', reminderSent: false, paymentHistory: [] },
+  { id: 'fee-7', plotId: 'plot-85', plotPosition: '竹韵园-1排1号', contractNo: 'CT20240008', feeType: 'management', amount: 1200, dueDate: '2025-08-30', paidAmount: 1200, status: 'paid', paidDate: '2025-06-10', reminderSent: true, paymentHistory: [{ id: 'ph-7', amount: 1200, date: '2025-06-10' }] },
+  { id: 'fee-8', plotId: 'plot-1', plotPosition: '松柏园-1排1号', contractNo: 'CT20240001', feeType: 'burial', amount: 3000, dueDate: '2025-01-20', paidAmount: 3000, status: 'paid', paidDate: '2025-01-18', reminderSent: false, paymentHistory: [{ id: 'ph-8', amount: 3000, date: '2025-01-18' }] },
+  { id: 'fee-9', plotId: 'plot-9', plotPosition: '梅花园-1排1号', contractNo: 'CT20240003', feeType: 'inscription', amount: 1500, dueDate: '2025-02-28', paidAmount: 1500, status: 'paid', paidDate: '2025-02-25', reminderSent: false, paymentHistory: [{ id: 'ph-9', amount: 1500, date: '2025-02-25' }] },
+  { id: 'fee-10', plotId: 'plot-49', plotPosition: '兰亭园-1排1号', contractNo: 'CT20240004', feeType: 'relocation', amount: 5000, dueDate: '2025-04-05', paidAmount: 5000, status: 'paid', paidDate: '2025-04-03', reminderSent: false, paymentHistory: [{ id: 'ph-10', amount: 5000, date: '2025-04-03' }] },
 ]

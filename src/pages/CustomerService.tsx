@@ -15,7 +15,7 @@ const relocStatusBadge: Record<RelocationStatus, string> = {
 const nextStatus: Record<RelocationStatus, RelocationStatus> = { pending: 'approved', approved: 'in_progress', in_progress: 'completed', completed: 'completed' }
 
 export default function CustomerService() {
-  const { customers, addFollowUp, updateRelocationStatus, addRelocation } = useStore()
+  const { customers, plots, addFollowUp, updateRelocationStatus, addRelocation } = useStore()
   const [activeTab, setActiveTab] = useState<number>(0)
   const [searchTerm, setSearchTerm] = useState('')
   const [drawerId, setDrawerId] = useState<string | null>(null)
@@ -28,14 +28,22 @@ export default function CustomerService() {
     if (!searchTerm) return true
     return c.buyerName.includes(searchTerm) || c.plotPosition.includes(searchTerm) || c.contractNo.includes(searchTerm)
   })
+
+  const today = new Date().toISOString().split('T')[0]
   const sortedFollowUp = [...customers].filter(c => c.nextFollowUpDate).sort((a, b) => {
     const da = new Date(a.nextFollowUpDate!).getTime(), db = new Date(b.nextFollowUpDate!).getTime()
     if (isNaN(da) || isNaN(db)) return 0
+    const aOverdue = a.nextFollowUpDate! < today
+    const bOverdue = b.nextFollowUpDate! < today
+    if (aOverdue && !bOverdue) return -1
+    if (!aOverdue && bOverdue) return 1
     return da - db
   })
+
   const relocationList = customers.filter(c => c.relocationRequest)
-  const today = new Date().toISOString().split('T')[0]
+  const availablePlots = plots.filter(p => p.status === 'available')
   const drawerCustomer = customers.find(c => c.id === drawerId)
+  const selectedRelocCustomer = customers.find(c => c.id === relocForm.customerId)
 
   const handleAddFollowUp = () => {
     if (!followCustId || !followForm.content) return
@@ -43,6 +51,35 @@ export default function CustomerService() {
     addFollowUp(followCustId, record)
     setFollowCustId(null)
     setFollowForm({ type: 'phone', content: '', satisfaction: 5 })
+  }
+
+  const handleRelocCustomerChange = (customerId: string) => {
+    const customer = customers.find(c => c.id === customerId)
+    if (customer) {
+      setRelocForm(f => ({
+        ...f,
+        customerId,
+        fromPlot: customer.plotPosition,
+        type: 'relocate_in',
+      }))
+    } else {
+      setRelocForm(f => ({ ...f, customerId, fromPlot: '' }))
+    }
+  }
+
+  const handleSubmitRelocation = () => {
+    if (!relocForm.customerId || !relocForm.toPlot) return
+    const info: RelocationInfo = {
+      type: relocForm.type,
+      fromPlot: relocForm.fromPlot,
+      toPlot: relocForm.toPlot,
+      reason: relocForm.reason,
+      status: 'pending',
+      fee: relocForm.fee,
+    }
+    addRelocation(relocForm.customerId, info)
+    setShowRelocForm(false)
+    setRelocForm({ customerId: '', type: 'relocate_out', fromPlot: '', toPlot: '', reason: '', fee: 0 })
   }
 
   return (
@@ -94,27 +131,30 @@ export default function CustomerService() {
 
       {activeTab === 1 && (
         <div className="space-y-4">
-          {sortedFollowUp.map(c => (
-            <div key={c.id} className="card p-4 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-[#1B3A2D]/10 flex items-center justify-center"><User className="w-5 h-5 text-[#1B3A2D]" /></div>
-                <div>
-                  <p className="font-medium text-[#1B3A2D]">{c.buyerName} <span className="text-gray-400 text-xs ml-2"><Phone className="w-3 h-3 inline" /> {maskPhone(c.buyerPhone)}</span></p>
-                  <p className="text-sm text-gray-500"><MapPin className="w-3 h-3 inline mr-1" />{c.plotPosition}</p>
+          {sortedFollowUp.map(c => {
+            const isOverdue = c.nextFollowUpDate! < today
+            return (
+              <div key={c.id} className={`p-4 flex items-center justify-between ${isOverdue ? 'bg-red-50 border border-red-200 rounded-lg' : 'card'}`}>
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-[#1B3A2D]/10 flex items-center justify-center"><User className="w-5 h-5 text-[#1B3A2D]" /></div>
+                  <div>
+                    <p className="font-medium text-[#1B3A2D]">{c.buyerName} <span className="text-gray-400 text-xs ml-2"><Phone className="w-3 h-3 inline" /> {maskPhone(c.buyerPhone)}</span></p>
+                    <p className="text-sm text-gray-500"><MapPin className="w-3 h-3 inline mr-1" />{c.plotPosition}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">下次回访</p>
+                    <p className={`text-sm font-medium ${isOverdue ? 'text-red-500' : 'text-[#1B3A2D]'}`}>
+                      <Clock className="w-3 h-3 inline mr-1" />{c.nextFollowUpDate}
+                      {isOverdue && <span className="text-red-500 text-xs ml-1">已逾期</span>}
+                    </p>
+                  </div>
+                  <button className="btn-primary text-sm" onClick={() => setFollowCustId(c.id)}>添加回访</button>
                 </div>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <p className="text-xs text-gray-400">下次回访</p>
-                  <p className={`text-sm font-medium ${c.nextFollowUpDate! < today ? 'text-red-500' : 'text-[#1B3A2D]'}`}>
-                    <Clock className="w-3 h-3 inline mr-1" />{c.nextFollowUpDate}
-                    {c.nextFollowUpDate! < today && <span className="text-red-500 text-xs ml-1">已逾期</span>}
-                  </p>
-                </div>
-                <button className="btn-primary text-sm" onClick={() => setFollowCustId(c.id)}>添加回访</button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -133,14 +173,18 @@ export default function CustomerService() {
                   </span>
                   <div>
                     <p className="font-medium text-[#1B3A2D]">{c.buyerName}</p>
-                    <p className="text-sm text-gray-500">{r.fromPlot} → {r.toPlot} | {r.reason}</p>
+                    <p className="text-sm text-gray-500">原墓位: {c.plotPosition} | 目标墓位: {r.toPlot} | {r.reason}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-[#C4A35A] font-semibold">¥{r.fee.toLocaleString()}</span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${relocStatusBadge[r.status]}`}>{relocStatusLabels[r.status]}</span>
-                  {r.status !== 'completed' && (
-                    <button className="btn-secondary text-xs" onClick={() => updateRelocationStatus(c.id, nextStatus[r.status])}>{relocStatusLabels[nextStatus[r.status]]}</button>
+                  {r.status === 'completed' ? (
+                    <span className="text-emerald-700 font-medium text-sm">✓ 已完成</span>
+                  ) : (
+                    <>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${relocStatusBadge[r.status]}`}>{relocStatusLabels[r.status]}</span>
+                      <button className="btn-secondary text-xs" onClick={() => updateRelocationStatus(c.id, nextStatus[r.status])}>{relocStatusLabels[nextStatus[r.status]]}</button>
+                    </>
                   )}
                 </div>
               </div>
@@ -226,7 +270,7 @@ export default function CustomerService() {
               <button onClick={() => setShowRelocForm(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
             </div>
             <div><label className="block text-xs text-gray-500 mb-1">选择客户</label>
-              <select className="select-field" value={relocForm.customerId} onChange={e => setRelocForm(f => ({ ...f, customerId: e.target.value }))}>
+              <select className="select-field" value={relocForm.customerId} onChange={e => handleRelocCustomerChange(e.target.value)}>
                 <option value="">请选择客户</option>
                 {customers.map(c => <option key={c.id} value={c.id}>{c.buyerName} - {c.plotPosition}</option>)}
               </select></div>
@@ -238,19 +282,16 @@ export default function CustomerService() {
               <div><label className="block text-xs text-gray-500 mb-1">费用</label>
                 <input type="number" className="input-field" value={relocForm.fee} onChange={e => setRelocForm(f => ({ ...f, fee: +e.target.value }))} /></div>
               <div><label className="block text-xs text-gray-500 mb-1">原墓位</label>
-                <input className="input-field" value={relocForm.fromPlot} onChange={e => setRelocForm(f => ({ ...f, fromPlot: e.target.value }))} /></div>
+                <input className="input-field bg-gray-50" value={selectedRelocCustomer?.plotPosition || relocForm.fromPlot} disabled readOnly /></div>
               <div><label className="block text-xs text-gray-500 mb-1">目标墓位</label>
-                <input className="input-field" value={relocForm.toPlot} onChange={e => setRelocForm(f => ({ ...f, toPlot: e.target.value }))} /></div>
+                <select className="select-field" value={relocForm.toPlot} onChange={e => setRelocForm(f => ({ ...f, toPlot: e.target.value }))}>
+                  <option value="">请选择墓位</option>
+                  {availablePlots.map(p => <option key={p.id} value={p.position}>{p.position} (价格 ¥{p.price.toLocaleString()})</option>)}
+                </select></div>
               <div className="col-span-2"><label className="block text-xs text-gray-500 mb-1">原因</label>
                 <input className="input-field" value={relocForm.reason} onChange={e => setRelocForm(f => ({ ...f, reason: e.target.value }))} /></div>
             </div>
-            <div className="flex justify-end gap-3"><button className="btn-secondary" onClick={() => setShowRelocForm(false)}>取消</button><button className="btn-primary" onClick={() => {
-              if (!relocForm.customerId) return
-              const info: RelocationInfo = { type: relocForm.type, fromPlot: relocForm.fromPlot, toPlot: relocForm.toPlot, reason: relocForm.reason, status: 'pending', fee: relocForm.fee }
-              addRelocation(relocForm.customerId, info)
-              setShowRelocForm(false)
-              setRelocForm({ customerId: '', type: 'relocate_out', fromPlot: '', toPlot: '', reason: '', fee: 0 })
-            }}>提交</button></div>
+            <div className="flex justify-end gap-3"><button className="btn-secondary" onClick={() => setShowRelocForm(false)}>取消</button><button className="btn-primary" onClick={handleSubmitRelocation}>提交</button></div>
           </div>
         </div>
       )}

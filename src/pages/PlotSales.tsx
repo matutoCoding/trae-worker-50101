@@ -1,16 +1,20 @@
 import { useState } from 'react'
 import { useStore } from '@/store'
 import type { SalesContract, ContractStatus } from '@/types'
-import { ShoppingBag, Plus, Search, Eye, Printer, X } from 'lucide-react'
 import { maskIdCard, maskPhone, generateUniqueId } from '@/utils/helpers'
+import { format, parseISO } from 'date-fns'
+import { ShoppingBag, Plus, Search, Eye, Printer, X, FileText, User, Phone, MapPin, CreditCard, ArrowRight } from 'lucide-react'
 
 const statusLabels: Record<ContractStatus, string> = { pending: '待签', signed: '已签', completed: '已完成', cancelled: '已取消' }
-const statusBadgeClass: Record<ContractStatus, string> = { pending: 'bg-amber-50 text-amber-700', signed: 'bg-sky-50 text-sky-700', completed: 'bg-emerald-50 text-emerald-700', cancelled: 'bg-red-50 text-red-700' }
+const statusBadge: Record<ContractStatus, string> = {
+  pending: 'bg-amber-50 text-amber-700', signed: 'bg-sky-50 text-sky-700',
+  completed: 'bg-emerald-50 text-emerald-700', cancelled: 'bg-red-50 text-red-700',
+}
 
 const emptyForm = { buyerName: '', buyerPhone: '', buyerIdCard: '', deceasedName: '', plotId: '', paymentMethod: 'full' as 'full' | 'installment', notes: '' }
 
 export default function PlotSales() {
-  const { contracts, plots, addContract, setPlotStatus } = useStore()
+  const { contracts, plots, addContract, updateContractStatus, setPlotStatus } = useStore()
   const [showModal, setShowModal] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<ContractStatus | 'all'>('all')
@@ -18,6 +22,8 @@ export default function PlotSales() {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [validationError, setValidationError] = useState('')
+  const [selectedContract, setSelectedContract] = useState<SalesContract | null>(null)
+  const [printToast, setPrintToast] = useState<string | null>(null)
 
   const availablePlots = plots.filter(p => p.status === 'available')
   const selectedPlot = plots.find(p => p.id === form.plotId)
@@ -76,8 +82,64 @@ export default function PlotSales() {
     setSaving(false)
   }
 
+  const handleStatusChange = (newStatus: ContractStatus) => {
+    if (!selectedContract) return
+    updateContractStatus(selectedContract.id, newStatus)
+    setSelectedContract({ ...selectedContract, status: newStatus })
+  }
+
+  const handlePrint = (contract: SalesContract) => {
+    setPrintToast(`合同 ${contract.contractNo} 已发送打印`)
+    setTimeout(() => setPrintToast(null), 2000)
+  }
+
+  const renderStatusActions = (contract: SalesContract) => {
+    switch (contract.status) {
+      case 'pending':
+        return (
+          <div className="flex gap-2">
+            <button className="btn-primary flex items-center gap-1" onClick={() => handleStatusChange('signed')}>
+              签约 <ArrowRight className="w-4 h-4" />
+            </button>
+            <button className="btn-secondary text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleStatusChange('cancelled')}>
+              作废
+            </button>
+          </div>
+        )
+      case 'signed':
+        return (
+          <div className="flex gap-2">
+            <button className="btn-primary flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => handleStatusChange('completed')}>
+              完成交易 <ArrowRight className="w-4 h-4" />
+            </button>
+            <button className="btn-secondary" onClick={() => handleStatusChange('pending')}>
+              退回待签
+            </button>
+          </div>
+        )
+      case 'completed':
+        return <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">已完成 ✓</span>
+      case 'cancelled':
+        return <span className="inline-flex items-center gap-1 text-red-600 font-medium">已作废</span>
+      default:
+        return null
+    }
+  }
+
+  const paymentProgress = (paid: number, total: number) => total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0
+
+  const fmtDate = (s: string) => {
+    try { return format(parseISO(s), 'yyyy-MM-dd') } catch { return s }
+  }
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 relative">
+      {printToast && (
+        <div className="fixed top-6 right-6 z-[60] bg-[#1B3A2D] text-white px-4 py-2 rounded-lg shadow-lg text-sm animate-fade-in">
+          {printToast}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <ShoppingBag className="w-6 h-6 text-[#C4A35A]" />
@@ -148,15 +210,19 @@ export default function PlotSales() {
                 <td className="px-4 py-3 text-[#C4A35A] font-semibold">¥{c.price.toLocaleString()}</td>
                 <td className="px-4 py-3">{c.paymentMethod === 'full' ? '全款' : '分期'}</td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusBadgeClass[c.status]}`}>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusBadge[c.status]}`}>
                     {statusLabels[c.status]}
                   </span>
                 </td>
                 <td className="px-4 py-3">{c.signingDate}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <button className="text-[#5A8F7B] hover:text-[#1B3A2D]" title="查看"><Eye className="w-4 h-4" /></button>
-                    <button className="text-gray-400 hover:text-[#1B3A2D]" title="打印"><Printer className="w-4 h-4" /></button>
+                    <button className="text-[#5A8F7B] hover:text-[#1B3A2D]" title="查看" onClick={() => setSelectedContract(c)}>
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button className="text-gray-400 hover:text-[#1B3A2D]" title="打印" onClick={() => handlePrint(c)}>
+                      <Printer className="w-4 h-4" />
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -216,6 +282,127 @@ export default function PlotSales() {
             <div className="flex justify-end gap-3 pt-2">
               <button className="btn-secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</button>
               <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedContract && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setSelectedContract(null)}>
+          <div className="bg-white rounded-lg w-full max-w-xl p-6 space-y-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-[#C4A35A]" />
+                <h2 className="section-title text-lg">合同详情</h2>
+              </div>
+              <button onClick={() => setSelectedContract(null)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
+            </div>
+
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">合同编号</p>
+                <p className="font-semibold text-[#1B3A2D]">{selectedContract.contractNo}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">签约日期</p>
+                <p className="text-sm">{fmtDate(selectedContract.signingDate)}</p>
+              </div>
+              <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-medium ${statusBadge[selectedContract.status]}`}>
+                {statusLabels[selectedContract.status]}
+              </span>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <User className="w-4 h-4 text-gray-400" /> 购墓人信息
+                </h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-gray-500">姓名</p>
+                    <p className="text-[#1B3A2D]">{selectedContract.buyerName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">联系电话</p>
+                    <p className="text-[#1B3A2D] flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-gray-400" />
+                      {maskPhone(selectedContract.buyerPhone)}
+                    </p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs text-gray-500">身份证号</p>
+                    <p className="text-[#1B3A2D]">{maskIdCard(selectedContract.buyerIdCard)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-gray-400" /> 墓位信息
+                </h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-gray-500">墓位位置</p>
+                    <p className="text-[#1B3A2D]">{selectedContract.plotPosition}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">价格</p>
+                    <p className="text-[#C4A35A] font-semibold">¥{selectedContract.price.toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-gray-400" /> 付款信息
+                </h3>
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-500">付款方式</p>
+                    <p className="text-[#1B3A2D] font-medium">{selectedContract.paymentMethod === 'full' ? '全款' : '分期'}</p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-500">已付 / 应缴</p>
+                    <p className="text-[#1B3A2D]">
+                      <span className="text-emerald-600 font-semibold">¥{selectedContract.paidAmount.toLocaleString()}</span>
+                      <span className="text-gray-400 mx-1">/</span>
+                      ¥{selectedContract.price.toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-gradient-to-r from-[#5A8F7B] to-[#1B3A2D] h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${paymentProgress(selectedContract.paidAmount, selectedContract.price)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {selectedContract.deceasedName && (
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <p className="text-xs text-gray-500">逝者姓名</p>
+                    <p className="text-[#1B3A2D]">{selectedContract.deceasedName}</p>
+                  </div>
+                </div>
+              )}
+
+              {selectedContract.notes && (
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-xs text-gray-500 mb-1">备注</p>
+                  <p className="text-sm text-gray-700">{selectedContract.notes}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span>当前状态：</span>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusBadge[selectedContract.status]}`}>
+                  {statusLabels[selectedContract.status]}
+                </span>
+              </div>
+              {renderStatusActions(selectedContract)}
             </div>
           </div>
         </div>

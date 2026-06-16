@@ -13,6 +13,11 @@ import type {
   SacrificeStatus,
   MaintenanceStatus,
   FeeStatus,
+  InscriptionInfo,
+  RelocationInfo,
+  RelocationStatus,
+  FollowUpRecord,
+  PaymentHistoryEntry,
 } from '@/types'
 import {
   cemeteryPlots as initialPlots,
@@ -24,6 +29,7 @@ import {
   feeRecords as initialFees,
   cemeteryAreas as initialAreas,
 } from '@/data/mockData'
+import { generateUniqueId } from '@/utils/helpers'
 
 interface CemeteryArea {
   id: string
@@ -54,7 +60,15 @@ function loadPersistedData(): AppData | null {
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.plots)) {
-        return parsed as AppData
+        const data = parsed as AppData
+        // Migrate: fee records need paymentHistory array
+        if (data.fees && data.fees.length > 0) {
+          data.fees = data.fees.map((f) => ({
+            ...f,
+            paymentHistory: Array.isArray(f.paymentHistory) ? f.paymentHistory : (f.paidAmount > 0 && f.paidDate ? [{ id: `migrated-${f.id}`, amount: f.paidAmount, date: f.paidDate }] : []),
+          }))
+        }
+        return data
       }
     }
   } catch {
@@ -71,7 +85,11 @@ function persistData(data: AppData): void {
   }
 }
 
-const persisted = loadPersistedData()
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().split('T')[0]
+}
 
 const defaultData: AppData = {
   areas: initialAreas,
@@ -86,6 +104,7 @@ const defaultData: AppData = {
 
 interface AppState extends AppData {
   setPlotStatus: (plotId: string, status: PlotStatus) => void
+  updatePlotHolder: (plotId: string, patch: Partial<Pick<CemeteryPlot, 'holderName' | 'deceasedName' | 'contractId' | 'saleDate' | 'burialDate' | 'position' | 'areaId' | 'areaName'>>) => void
   addContract: (contract: SalesContract) => void
   updateContractStatus: (contractId: string, status: ContractStatus) => void
   addBurial: (burial: BurialRecord) => void
@@ -95,17 +114,19 @@ interface AppState extends AppData {
   updateSacrificeStatus: (sacrificeId: string, status: SacrificeStatus) => void
   addMaintenanceTask: (task: MaintenanceTask) => void
   updateMaintenanceStatus: (taskId: string, status: MaintenanceStatus) => void
-  addFollowUp: (customerId: string, record: CustomerRecord['followUpRecords'][0]) => void
+  addFollowUp: (customerId: string, record: FollowUpRecord) => void
+  updateCustomerNextFollowUp: (customerId: string, nextDate: string) => void
+  updateCustomerPlot: (customerId: string, plotId: string, plotPosition: string) => void
   updateRelocationStatus: (customerId: string, status: RelocationStatus) => void
   addRelocation: (customerId: string, info: RelocationInfo) => void
+  completeRelocation: (customerId: string) => void
   addFee: (fee: FeeRecord) => void
   updateFeeStatus: (feeId: string, status: FeeStatus, paidAmount?: number) => void
+  addFeePayment: (feeId: string, amount: number) => void
   resetData: () => void
 }
 
-type RelocationStatus = import('@/types').RelocationStatus
-type RelocationInfo = import('@/types').RelocationInfo
-
+const persisted = loadPersistedData()
 const initialData: AppData = persisted || defaultData
 
 export const useStore = create<AppState>((set, get) => ({
@@ -125,6 +146,13 @@ export const useStore = create<AppState>((set, get) => ({
       return newState
     }),
 
+  updatePlotHolder: (plotId, patch) =>
+    set((state) => {
+      const newState = { plots: state.plots.map((p) => (p.id === plotId ? { ...p, ...patch } : p)) }
+      persistData({ ...state, ...newState })
+      return newState
+    }),
+
   addContract: (contract) =>
     set((state) => {
       const newState = { contracts: [...state.contracts, contract] }
@@ -134,7 +162,19 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateContractStatus: (contractId, status) =>
     set((state) => {
-      const newState = { contracts: state.contracts.map((c) => (c.id === contractId ? { ...c, status } : c)) }
+      const contract = state.contracts.find((c) => c.id === contractId)
+      if (!contract) return state
+      const newContracts = state.contracts.map((c) => (c.id === contractId ? { ...c, status } : c))
+      let newPlots = state.plots
+      let plotStatus: PlotStatus | null = null
+      if (status === 'pending') plotStatus = 'reserved'
+      if (status === 'signed') plotStatus = 'reserved'
+      if (status === 'completed') plotStatus = 'sold'
+      if (status === 'cancelled') plotStatus = 'available'
+      if (plotStatus) {
+        newPlots = state.plots.map((p) => (p.id === contract.plotId ? { ...p, status: plotStatus!, saleDate: status === 'completed' ? new Date().toISOString().split('T')[0] : undefined } : p))
+      }
+      const newState = { contracts: newContracts, plots: newPlots }
       persistData({ ...state, ...newState })
       return newState
     }),
@@ -148,7 +188,14 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateBurialStatus: (burialId, status) =>
     set((state) => {
-      const newState = { burials: state.burials.map((b) => (b.id === burialId ? { ...b, status } : b)) }
+      const burial = state.burials.find((b) => b.id === burialId)
+      if (!burial) return state
+      const newBurials = state.burials.map((b) => (b.id === burialId ? { ...b, status } : b))
+      let newPlots = state.plots
+      if (status === 'completed') {
+        newPlots = state.plots.map((p) => (p.id === burial.plotId ? { ...p, status: 'buried' as PlotStatus, burialDate: burial.burialDate, deceasedName: burial.deceasedName } : p))
+      }
+      const newState = { burials: newBurials, plots: newPlots }
       persistData({ ...state, ...newState })
       return newState
     }),
@@ -194,25 +241,76 @@ export const useStore = create<AppState>((set, get) => ({
 
   addFollowUp: (customerId, record) =>
     set((state) => {
+      const today = new Date().toISOString().split('T')[0]
+      let nextDate: string
+      switch (record.type) {
+        case 'phone': nextDate = addDays(today, 30); break
+        case 'visit': nextDate = addDays(today, 90); break
+        case 'wechat': nextDate = addDays(today, 14); break
+        default: nextDate = addDays(today, 30)
+      }
       const newState = {
         customers: state.customers.map((c) =>
-          c.id === customerId ? { ...c, followUpRecords: [...c.followUpRecords, record] } : c
+          c.id === customerId ? { ...c, followUpRecords: [...c.followUpRecords, record], lastVisitDate: today, nextFollowUpDate: nextDate } : c
         ),
       }
       persistData({ ...state, ...newState })
       return newState
     }),
 
+  updateCustomerNextFollowUp: (customerId, nextDate) =>
+    set((state) => {
+      const newState = { customers: state.customers.map((c) => (c.id === customerId ? { ...c, nextFollowUpDate: nextDate } : c)) }
+      persistData({ ...state, ...newState })
+      return newState
+    }),
+
+  updateCustomerPlot: (customerId, plotId, plotPosition) =>
+    set((state) => {
+      const newState = { customers: state.customers.map((c) => (c.id === customerId ? { ...c, plotId, plotPosition } : c)) }
+      persistData({ ...state, ...newState })
+      return newState
+    }),
+
   updateRelocationStatus: (customerId, status) =>
     set((state) => {
-      const newState = {
+      const customer = state.customers.find((c) => c.id === customerId)
+      if (!customer || !customer.relocationRequest) return state
+      const partialState: Partial<AppData> = {
         customers: state.customers.map((c) =>
           c.id === customerId && c.relocationRequest
             ? { ...c, relocationRequest: { ...c.relocationRequest, status } }
             : c
         ),
       }
-      persistData({ ...state, ...newState })
+      if (status === 'completed') {
+        const req = customer.relocationRequest
+        const { plots } = get()
+        const oldPlot = plots.find((p) => p.position === req.fromPlot)
+        const newPlot = plots.find((p) => p.position === req.toPlot)
+        let updatedPlots = state.plots
+        if (oldPlot) {
+          updatedPlots = updatedPlots.map((p) =>
+            p.id === oldPlot.id
+              ? { ...p, status: 'available' as PlotStatus, holderName: undefined, deceasedName: undefined, contractId: undefined, saleDate: undefined, burialDate: undefined }
+              : p
+          )
+        }
+        if (newPlot) {
+          updatedPlots = updatedPlots.map((p) =>
+            p.id === newPlot.id
+              ? { ...p, status: oldPlot?.status === 'buried' ? 'buried' : 'sold', holderName: customer.buyerName, deceasedName: oldPlot?.deceasedName, contractId: customer.contractNo, saleDate: new Date().toISOString().split('T')[0], burialDate: oldPlot?.burialDate }
+              : p
+          )
+        }
+        const updatedCustomers = partialState.customers!.map((c) =>
+          c.id === customerId && newPlot ? { ...c, plotId: newPlot.id, plotPosition: newPlot.position } : c
+        )
+        partialState.customers = updatedCustomers
+        partialState.plots = updatedPlots
+      }
+      const newState = { ...state, ...partialState }
+      persistData(newState)
       return newState
     }),
 
@@ -226,6 +324,14 @@ export const useStore = create<AppState>((set, get) => ({
       persistData({ ...state, ...newState })
       return newState
     }),
+
+  completeRelocation: (customerId) => {
+    const { customers } = get()
+    const customer = customers.find((c) => c.id === customerId)
+    if (customer?.relocationRequest) {
+      get().updateRelocationStatus(customerId, 'completed')
+    }
+  },
 
   addFee: (fee) =>
     set((state) => {
@@ -242,6 +348,36 @@ export const useStore = create<AppState>((set, get) => ({
             ? { ...f, status, paidAmount: paidAmount ?? f.paidAmount, paidDate: status === 'paid' ? new Date().toISOString().split('T')[0] : f.paidDate }
             : f
         ),
+      }
+      persistData({ ...state, ...newState })
+      return newState
+    }),
+
+  addFeePayment: (feeId, amount) =>
+    set((state) => {
+      const today = new Date().toISOString().split('T')[0]
+      const entry: PaymentHistoryEntry = { id: generateUniqueId(), amount, date: today }
+      const newState = {
+        fees: state.fees.map((f) => {
+          if (f.id !== feeId) return f
+          const newPaid = f.paidAmount + amount
+          const isFullyPaid = newPaid >= f.amount
+          let newStatus: FeeStatus = f.status
+          if (isFullyPaid) {
+            newStatus = 'paid'
+          } else if (f.status === 'overdue') {
+            newStatus = 'overdue'
+          } else if (newPaid > 0) {
+            newStatus = 'partial'
+          }
+          return {
+            ...f,
+            paidAmount: newPaid,
+            status: newStatus,
+            paidDate: isFullyPaid ? today : f.paidDate,
+            paymentHistory: [...(f.paymentHistory || []), entry],
+          }
+        }),
       }
       persistData({ ...state, ...newState })
       return newState

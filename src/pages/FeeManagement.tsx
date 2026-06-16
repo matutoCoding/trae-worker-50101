@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react'
-import { Wallet, AlertTriangle, CheckCircle, Clock, DollarSign, CreditCard, Plus, X } from 'lucide-react'
-import { differenceInDays, format } from 'date-fns'
 import { useStore } from '@/store'
+import type { FeeStatus, FeeRecord } from '@/types'
 import { safeParseDate } from '@/utils/helpers'
-import type { FeeRecord, FeeStatus } from '@/types'
+import { format, differenceInDays, parseISO } from 'date-fns'
+import { Wallet, AlertTriangle, CheckCircle, Clock, DollarSign, CreditCard, X, History, ArrowRight } from 'lucide-react'
 
 const FEE_TYPE_LABEL: Record<string, string> = {
-  management: '管理费', maintenance: '维护费', burial: '安葬费', inscription: '刻碑费', relocation: '迁坟费',
+  management: '管理费', maintenance: '养护费', burial: '安葬费', inscription: '刻字费', relocation: '迁墓费',
 }
 const STATUS_BADGE: Record<FeeStatus, string> = {
   unpaid: 'badge bg-amber-50 text-amber-700', partial: 'badge bg-sky-50 text-sky-700',
@@ -16,23 +16,24 @@ const STATUS_LABEL: Record<FeeStatus, string> = {
   unpaid: '未缴', partial: '部分缴纳', paid: '已缴', overdue: '逾期',
 }
 
-function remainingBadge(days: number) {
-  if (days > 15) return { icon: '🟢', cls: 'text-emerald-600', label: '安全' }
-  if (days >= 7) return { icon: '🟡', cls: 'text-amber-600', label: '预警' }
-  return { icon: '🔴', cls: 'text-red-600', label: '紧急' }
-}
-
 function getDisplayStatus(status: FeeStatus, dueDate: string): FeeStatus {
-  if (status === 'unpaid') {
-    const d = safeParseDate(dueDate)
-    if (d && differenceInDays(d, new Date()) < 0) return 'overdue'
-  }
+  if (status === 'paid') return 'paid'
+  const d = safeParseDate(dueDate)
+  if (d && differenceInDays(d, new Date()) < 0) return 'overdue'
   return status
 }
 
+function getWarningLevel(displayStatus: FeeStatus, daysLeft: number) {
+  if (displayStatus === 'overdue') return { icon: '🔴', cls: 'text-red-600', label: '紧急' }
+  if (daysLeft < 7) return { icon: '🟡', cls: 'text-amber-600', label: '预警' }
+  if (daysLeft < 15) return { icon: '🟠', cls: 'text-orange-600', label: '注意' }
+  return { icon: '🟢', cls: 'text-emerald-600', label: '安全' }
+}
+
 export default function FeeManagement() {
-  const { fees, updateFeeStatus } = useStore()
-  const [modalFee, setModalFee] = useState<FeeRecord | null>(null)
+  const { fees, addFeePayment } = useStore()
+  const [payModalFee, setPayModalFee] = useState<FeeRecord | null>(null)
+  const [historyFee, setHistoryFee] = useState<FeeRecord | null>(null)
   const [payAmount, setPayAmount] = useState('')
   const [saving, setSaving] = useState(false)
   const [payError, setPayError] = useState('')
@@ -68,19 +69,22 @@ export default function FeeManagement() {
       .sort((a, b) => a.daysLeft - b.daysLeft)
   }, [fees])
 
-  const openModal = (fee: FeeRecord) => { setModalFee(fee); setPayAmount(String(fee.amount - fee.paidAmount)); setPayError('') }
+  const openPayModal = (fee: FeeRecord) => { setPayModalFee(fee); setPayAmount(String(fee.amount - fee.paidAmount)); setPayError('') }
 
   const handlePay = () => {
-    if (!modalFee || saving) return
+    if (!payModalFee || saving) return
     const amount = Number(payAmount)
     if (isNaN(amount) || amount <= 0) { setPayError('请输入有效的正数金额'); return }
-    const remaining = modalFee.amount - modalFee.paidAmount
+    const remaining = payModalFee.amount - payModalFee.paidAmount
     if (amount > remaining) { setPayError(`收款金额不能超过待缴金额 ¥${remaining.toLocaleString()}`); return }
     setSaving(true)
-    const newPaid = modalFee.paidAmount + amount
-    updateFeeStatus(modalFee.id, newPaid >= modalFee.amount ? 'paid' : 'partial', newPaid)
-    setSaving(false); setModalFee(null); setPayAmount(''); setPayError('')
+    setTimeout(() => {
+      addFeePayment(payModalFee.id, amount)
+      setSaving(false); setPayModalFee(null); setPayAmount(''); setPayError('')
+    }, 300)
   }
+
+  const progressPercent = (paid: number, total: number) => total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0
 
   const summaryCards = [
     { label: '待收金额', value: `¥${summary.unpaidTotal.toLocaleString()}`, icon: Wallet, accent: 'bg-amber-500' },
@@ -93,7 +97,6 @@ export default function FeeManagement() {
     <div className="space-y-6 font-sans">
       <div className="flex items-center justify-between">
         <h1 className="section-title text-xl">费用管理</h1>
-        <button className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> 生成账单</button>
       </div>
 
       {overdueFees.length > 0 && (
@@ -128,8 +131,8 @@ export default function FeeManagement() {
             </thead>
             <tbody>
               {renewals.map((f) => {
-                const rb = remainingBadge(f.daysLeft)
-                const status = ds(f)
+                const displayStatus = ds(f)
+                const wl = getWarningLevel(displayStatus, f.daysLeft)
                 return (
                   <tr key={f.id} className="table-row">
                     <td className="px-3 py-2 whitespace-nowrap">{f.plotPosition}</td>
@@ -137,10 +140,10 @@ export default function FeeManagement() {
                     <td className="px-3 py-2">{FEE_TYPE_LABEL[f.feeType]}</td>
                     <td className="px-3 py-2">¥{f.amount.toLocaleString()}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{fmtDate(f.dueDate)}</td>
-                    <td className={`px-3 py-2 font-medium ${rb.cls}`}>{f.daysLeft < 0 ? `逾期${Math.abs(f.daysLeft)}天` : `${f.daysLeft}天`}</td>
-                    <td className="px-3 py-2">{rb.icon} {rb.label}</td>
-                    <td className="px-3 py-2"><span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span></td>
-                    <td className="px-3 py-2"><button onClick={() => openModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button></td>
+                    <td className={`px-3 py-2 font-medium ${wl.cls}`}>{f.daysLeft < 0 ? `逾期${Math.abs(f.daysLeft)}天` : `${f.daysLeft}天`}</td>
+                    <td className="px-3 py-2">{wl.icon} {wl.label}</td>
+                    <td className="px-3 py-2"><span className={STATUS_BADGE[displayStatus]}>{STATUS_LABEL[displayStatus]}</span></td>
+                    <td className="px-3 py-2"><button onClick={() => openPayModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button></td>
                   </tr>
                 )
               })}
@@ -175,7 +178,17 @@ export default function FeeManagement() {
                     <td className="px-3 py-2 whitespace-nowrap">{f.paidDate ? fmtDate(f.paidDate) : '-'}</td>
                     <td className="px-3 py-2"><span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span></td>
                     <td className="px-3 py-2">
-                      {f.status !== 'paid' && <button onClick={() => openModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button>}
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setHistoryFee(f)} className="text-sky-600 hover:underline text-xs font-medium flex items-center gap-1">
+                          <History className="w-3 h-3" /> 查看历史
+                        </button>
+                        {f.status !== 'paid' && (
+                          <>
+                            <ArrowRight className="w-3 h-3 text-charcoal/20" />
+                            <button onClick={() => openPayModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -185,20 +198,20 @@ export default function FeeManagement() {
         </div>
       </div>
 
-      {modalFee && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setModalFee(null)}>
+      {payModalFee && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => !saving && setPayModalFee(null)}>
           <div className="bg-white rounded-lg shadow-xl w-[400px] p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="section-title">收款</h3>
-              <button onClick={() => setModalFee(null)} className="text-charcoal/40 hover:text-charcoal"><X className="w-5 h-5" /></button>
+              <button onClick={() => !saving && setPayModalFee(null)} className="text-charcoal/40 hover:text-charcoal"><X className="w-5 h-5" /></button>
             </div>
             <div className="space-y-3 text-sm mb-4">
-              <div className="flex justify-between"><span className="text-charcoal/60">墓位位置</span><span>{modalFee.plotPosition}</span></div>
-              <div className="flex justify-between"><span className="text-charcoal/60">合同编号</span><span>{modalFee.contractNo}</span></div>
-              <div className="flex justify-between"><span className="text-charcoal/60">费用类型</span><span>{FEE_TYPE_LABEL[modalFee.feeType]}</span></div>
-              <div className="flex justify-between"><span className="text-charcoal/60">应缴金额</span><span>¥{modalFee.amount.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-charcoal/60">已缴金额</span><span>¥{modalFee.paidAmount.toLocaleString()}</span></div>
-              <div className="flex justify-between font-medium"><span className="text-charcoal/60">待缴金额</span><span className="text-red-600">¥{(modalFee.amount - modalFee.paidAmount).toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-charcoal/60">墓位位置</span><span>{payModalFee.plotPosition}</span></div>
+              <div className="flex justify-between"><span className="text-charcoal/60">合同编号</span><span>{payModalFee.contractNo}</span></div>
+              <div className="flex justify-between"><span className="text-charcoal/60">费用类型</span><span>{FEE_TYPE_LABEL[payModalFee.feeType]}</span></div>
+              <div className="flex justify-between"><span className="text-charcoal/60">应缴金额</span><span>¥{payModalFee.amount.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-charcoal/60">已缴金额</span><span>¥{payModalFee.paidAmount.toLocaleString()}</span></div>
+              <div className="flex justify-between font-medium"><span className="text-charcoal/60">待缴金额</span><span className="text-red-600">¥{(payModalFee.amount - payModalFee.paidAmount).toLocaleString()}</span></div>
             </div>
             <div className="mb-4">
               <label className="block text-sm text-charcoal/60 mb-1">收款金额</label>
@@ -206,15 +219,82 @@ export default function FeeManagement() {
                 <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal/30" />
                 <input type="number" className="input-field pl-9" value={payAmount}
                   onChange={(e) => { setPayAmount(e.target.value); setPayError('') }}
-                  max={modalFee.amount - modalFee.paidAmount} min={0} />
+                  max={payModalFee.amount - payModalFee.paidAmount} min={0} disabled={saving} />
               </div>
               {payError && <p className="text-xs text-red-500 mt-1">{payError}</p>}
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setModalFee(null)} className="btn-secondary flex-1">取消</button>
+              <button onClick={() => !saving && setPayModalFee(null)} disabled={saving} className="btn-secondary flex-1">取消</button>
               <button onClick={handlePay} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-2">
                 <CreditCard className="w-4 h-4" /> {saving ? '处理中...' : '确认收款'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {historyFee && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setHistoryFee(null)}>
+          <div className="bg-white rounded-lg shadow-xl w-[520px] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-charcoal/10 sticky top-0 bg-white">
+              <h3 className="section-title flex items-center gap-2"><History className="w-4 h-4" /> 收款历史</h3>
+              <button onClick={() => setHistoryFee(null)} className="text-charcoal/40 hover:text-charcoal"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-charcoal/[0.03] rounded-lg p-4 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-charcoal/60">墓位位置</span><span className="font-medium">{historyFee.plotPosition}</span></div>
+                <div className="flex justify-between"><span className="text-charcoal/60">费用类型</span><span className="font-medium">{FEE_TYPE_LABEL[historyFee.feeType]}</span></div>
+                <div className="flex justify-between"><span className="text-charcoal/60">应缴金额</span><span className="font-medium">¥{historyFee.amount.toLocaleString()}</span></div>
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-charcoal/60">缴费进度</span>
+                  <span className="font-medium">¥{historyFee.paidAmount.toLocaleString()} / ¥{historyFee.amount.toLocaleString()} ({progressPercent(historyFee.paidAmount, historyFee.amount)}%)</span>
+                </div>
+                <div className="w-full h-2.5 bg-charcoal/10 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-amber-400 to-gold rounded-full transition-all" style={{ width: `${progressPercent(historyFee.paidAmount, historyFee.amount)}%` }} />
+                </div>
+                <div className="text-sm mt-2 text-right">
+                  <span className="text-charcoal/60">还差：</span>
+                  <span className={`font-medium ${historyFee.amount - historyFee.paidAmount > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    ¥{(historyFee.amount - historyFee.paidAmount).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-medium mb-2">收款记录</h4>
+                <div className="overflow-x-auto border border-charcoal/10 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="table-header">
+                        <th className="px-3 py-2 text-left whitespace-nowrap">日期</th>
+                        <th className="px-3 py-2 text-right whitespace-nowrap">金额</th>
+                        <th className="px-3 py-2 text-right whitespace-nowrap">收款累计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(historyFee.paymentHistory || []).length === 0 && (
+                        <tr><td colSpan={3} className="px-3 py-6 text-center text-charcoal/40">暂无收款记录</td></tr>
+                      )}
+                      {(historyFee.paymentHistory || []).map((entry, idx, arr) => {
+                        const running = arr.slice(0, idx + 1).reduce((s, e) => s + e.amount, 0)
+                        return (
+                          <tr key={entry.id} className="table-row">
+                            <td className="px-3 py-2 whitespace-nowrap">{fmtDate(entry.date)}</td>
+                            <td className="px-3 py-2 text-right text-emerald-600 font-medium">+¥{entry.amount.toLocaleString()}</td>
+                            <td className="px-3 py-2 text-right text-charcoal/60">¥{running.toLocaleString()}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 border-t border-charcoal/10 sticky bottom-0 bg-white">
+              <button onClick={() => setHistoryFee(null)} className="btn-secondary w-full">关闭</button>
             </div>
           </div>
         </div>
