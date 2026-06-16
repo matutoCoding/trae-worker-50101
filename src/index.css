@@ -1,0 +1,156 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #1B3A2D;
+    --color-primary-light: #2A5A45;
+    --color-primary-dark: #0F2018;
+    --color-gold: #C4A35A;
+    --color-gold-light: #D4B86A;
+    --color-gold-dark: #A88940;
+    --color-cream: #F5F3EF;
+    --color-charcoal: #2C2C2C;
+    --color-sage: #5A8F7B;
+    --color-sage-light: #7AB59E;
+    --color-border: #E2DDD5;
+    --color-danger: #C0392B;
+    --color-warning: #E67E22;
+    --color-success: #27AE60;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Noto Sans SC', sans-serif;
+    background-color: var(--color-cream);
+    color: var(--color-charcoal);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Noto Serif SC', serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #ccc;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 bg-[#1B3A2D] text-[#C4A35A] rounded font-medium text-sm transition-all duration-200 hover:bg-[#2A5A45] hover:shadow-lg active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-white text-[#1B3A2D] border border-[#1B3A2D] rounded font-medium text-sm transition-all duration-200 hover:bg-[#F5F3EF] active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 bg-transparent text-[#1B3A2D] rounded font-medium text-sm transition-all duration-200 hover:bg-[#E2DDD5]/50 active:scale-[0.98];
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-[#C0392B] text-white rounded font-medium text-sm transition-all duration-200 hover:bg-[#A93226] active:scale-[0.98];
+  }
+
+  .card {
+    @apply bg-white rounded-lg border border-[#E2DDD5] shadow-sm transition-shadow duration-200 hover:shadow-md;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 bg-white border border-[#E2DDD5] rounded text-sm text-[#2C2C2C] placeholder-[#999] transition-all duration-200 focus:outline-none focus:border-[#5A8F7B] focus:ring-1 focus:ring-[#5A8F7B]/30;
+  }
+
+  .select-field {
+    @apply w-full px-3 py-2 bg-white border border-[#E2DDD5] rounded text-sm text-[#2C2C2C] transition-all duration-200 focus:outline-none focus:border-[#5A8F7B] focus:ring-1 focus:ring-[#5A8F7B]/30 appearance-none cursor-pointer;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-available {
+    @apply badge bg-emerald-50 text-emerald-700;
+  }
+
+  .badge-reserved {
+    @apply badge bg-amber-50 text-amber-700;
+  }
+
+  .badge-sold {
+    @apply badge bg-sky-50 text-sky-700;
+  }
+
+  .badge-buried {
+    @apply badge bg-violet-50 text-violet-700;
+  }
+
+  .badge-maintenance {
+    @apply badge bg-red-50 text-red-700;
+  }
+
+  .section-title {
+    @apply text-lg font-semibold text-[#1B3A2D] font-serif;
+  }
+
+  .table-header {
+    @apply bg-[#1B3A2D]/5 text-[#1B3A2D] font-medium text-sm;
+  }
+
+  .table-row {
+    @apply border-b border-[#E2DDD5]/60 hover:bg-[#F5F3EF]/50 transition-colors;
+  }
+
+  .gold-accent-line {
+    @apply w-1 bg-[#C4A35A] rounded-full;
+  }
+}
+
+@layer utilities {
+  .text-gold {
+    color: var(--color-gold);
+  }
+
+  .bg-primary-gradient {
+    background: linear-gradient(135deg, #1B3A2D 0%, #2A5A45 100%);
+  }
+
+  .ornament-border {
+    background-image: repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 8px,
+      #C4A35A 8px,
+      #C4A35A 10px,
+      transparent 10px,
+      transparent 18px
+    );
+    background-size: 100% 2px;
+    background-position: bottom;
+    background-repeat: no-repeat;
+    padding-bottom: 4px;
+  }
+}
