@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '@/store'
-import type { FollowUpRecord, RelocationInfo, RelocationStatus } from '@/types'
+import type { RelocationInfo, RelocationStatus } from '@/types'
+import { maskPhone, generateUniqueId } from '@/utils/helpers'
 import { HeadphonesIcon, Search, Phone, MapPin, ArrowRightLeft, Star, Clock, X, User, FileText, Home } from 'lucide-react'
 
 const tabs = ['墓园档案查询', '客户回访', '迁墓处理'] as const
@@ -9,32 +10,36 @@ const followTypeIcons: Record<string, typeof Phone> = { phone: Phone, visit: Hom
 const relocTypeLabels: Record<string, string> = { relocate_out: '迁出', relocate_in: '迁入' }
 const relocStatusLabels: Record<RelocationStatus, string> = { pending: '待审批', approved: '已批准', in_progress: '进行中', completed: '已完成' }
 const relocStatusBadge: Record<RelocationStatus, string> = {
-  pending: 'badge-pending', approved: 'badge-approved', in_progress: 'badge-progress', completed: 'badge-completed',
+  pending: 'bg-amber-50 text-amber-700', approved: 'bg-blue-50 text-blue-700', in_progress: 'bg-purple-50 text-purple-700', completed: 'bg-emerald-50 text-emerald-700',
 }
 const nextStatus: Record<RelocationStatus, RelocationStatus> = { pending: 'approved', approved: 'in_progress', in_progress: 'completed', completed: 'completed' }
 
 export default function CustomerService() {
-  const { customers, addFollowUp } = useStore()
+  const { customers, addFollowUp, updateRelocationStatus, addRelocation } = useStore()
   const [activeTab, setActiveTab] = useState<number>(0)
   const [searchTerm, setSearchTerm] = useState('')
   const [drawerId, setDrawerId] = useState<string | null>(null)
   const [followCustId, setFollowCustId] = useState<string | null>(null)
   const [followForm, setFollowForm] = useState({ type: 'phone' as 'phone' | 'visit' | 'wechat', content: '', satisfaction: 5 })
   const [showRelocForm, setShowRelocForm] = useState(false)
-  const [relocForm, setRelocForm] = useState({ type: 'relocate_out' as 'relocate_out' | 'relocate_in', fromPlot: '', toPlot: '', reason: '', fee: 0 })
+  const [relocForm, setRelocForm] = useState({ customerId: '', type: 'relocate_out' as 'relocate_out' | 'relocate_in', fromPlot: '', toPlot: '', reason: '', fee: 0 })
 
   const filtered = customers.filter(c => {
     if (!searchTerm) return true
     return c.buyerName.includes(searchTerm) || c.plotPosition.includes(searchTerm) || c.contractNo.includes(searchTerm)
   })
-  const sortedFollowUp = [...customers].filter(c => c.nextFollowUpDate).sort((a, b) => a.nextFollowUpDate!.localeCompare(b.nextFollowUpDate!))
+  const sortedFollowUp = [...customers].filter(c => c.nextFollowUpDate).sort((a, b) => {
+    const da = new Date(a.nextFollowUpDate!).getTime(), db = new Date(b.nextFollowUpDate!).getTime()
+    if (isNaN(da) || isNaN(db)) return 0
+    return da - db
+  })
   const relocationList = customers.filter(c => c.relocationRequest)
   const today = new Date().toISOString().split('T')[0]
   const drawerCustomer = customers.find(c => c.id === drawerId)
 
   const handleAddFollowUp = () => {
     if (!followCustId || !followForm.content) return
-    const record: FollowUpRecord = { id: `fu-${Date.now()}`, date: today, type: followForm.type, content: followForm.content, satisfaction: followForm.satisfaction }
+    const record = { id: generateUniqueId(), date: today, type: followForm.type, content: followForm.content, satisfaction: followForm.satisfaction }
     addFollowUp(followCustId, record)
     setFollowCustId(null)
     setFollowForm({ type: 'phone', content: '', satisfaction: 5 })
@@ -76,7 +81,7 @@ export default function CustomerService() {
                 <tr key={c.id} className="table-row">
                   <td className="px-4 py-3 font-medium text-[#1B3A2D]">{c.contractNo}</td>
                   <td className="px-4 py-3">{c.buyerName}</td>
-                  <td className="px-4 py-3">{c.buyerPhone}</td>
+                  <td className="px-4 py-3">{maskPhone(c.buyerPhone)}</td>
                   <td className="px-4 py-3">{c.plotPosition}</td>
                   <td className="px-4 py-3">{c.lastVisitDate || '-'}</td>
                   <td className="px-4 py-3"><button className="text-[#5A8F7B] hover:text-[#1B3A2D] text-sm" onClick={() => setDrawerId(c.id)}>查看详情</button></td>
@@ -94,7 +99,7 @@ export default function CustomerService() {
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-full bg-[#1B3A2D]/10 flex items-center justify-center"><User className="w-5 h-5 text-[#1B3A2D]" /></div>
                 <div>
-                  <p className="font-medium text-[#1B3A2D]">{c.buyerName} <span className="text-gray-400 text-xs ml-2"><Phone className="w-3 h-3 inline" /> {c.buyerPhone}</span></p>
+                  <p className="font-medium text-[#1B3A2D]">{c.buyerName} <span className="text-gray-400 text-xs ml-2"><Phone className="w-3 h-3 inline" /> {maskPhone(c.buyerPhone)}</span></p>
                   <p className="text-sm text-gray-500"><MapPin className="w-3 h-3 inline mr-1" />{c.plotPosition}</p>
                 </div>
               </div>
@@ -135,10 +140,7 @@ export default function CustomerService() {
                   <span className="text-[#C4A35A] font-semibold">¥{r.fee.toLocaleString()}</span>
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${relocStatusBadge[r.status]}`}>{relocStatusLabels[r.status]}</span>
                   {r.status !== 'completed' && (
-                    <button className="btn-secondary text-xs" onClick={() => {
-                      const ns = nextStatus[r.status]
-                      useStore.setState(s => ({ customers: s.customers.map(cu => cu.id === c.id ? { ...cu, relocationRequest: { ...cu.relocationRequest!, status: ns } } : cu) }))
-                    }}>{relocStatusLabels[nextStatus[r.status]]}</button>
+                    <button className="btn-secondary text-xs" onClick={() => updateRelocationStatus(c.id, nextStatus[r.status])}>{relocStatusLabels[nextStatus[r.status]]}</button>
                   )}
                 </div>
               </div>
@@ -157,7 +159,7 @@ export default function CustomerService() {
             <div className="space-y-1">
               <p className="text-xs text-gray-400 gold-accent-line inline-block pb-1 mb-2">客户信息</p>
               <p><User className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.buyerName}</p>
-              <p><Phone className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.buyerPhone}</p>
+              <p><Phone className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{maskPhone(drawerCustomer.buyerPhone)}</p>
               <p><FileText className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.contractNo}</p>
             </div>
             <div className="space-y-1">
@@ -223,6 +225,11 @@ export default function CustomerService() {
               <h2 className="section-title">新增迁墓申请</h2>
               <button onClick={() => setShowRelocForm(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
             </div>
+            <div><label className="block text-xs text-gray-500 mb-1">选择客户</label>
+              <select className="select-field" value={relocForm.customerId} onChange={e => setRelocForm(f => ({ ...f, customerId: e.target.value }))}>
+                <option value="">请选择客户</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.buyerName} - {c.plotPosition}</option>)}
+              </select></div>
             <div className="grid grid-cols-2 gap-4">
               <div><label className="block text-xs text-gray-500 mb-1">类型</label>
                 <select className="select-field" value={relocForm.type} onChange={e => setRelocForm(f => ({ ...f, type: e.target.value as 'relocate_out' | 'relocate_in' }))}>
@@ -238,13 +245,11 @@ export default function CustomerService() {
                 <input className="input-field" value={relocForm.reason} onChange={e => setRelocForm(f => ({ ...f, reason: e.target.value }))} /></div>
             </div>
             <div className="flex justify-end gap-3"><button className="btn-secondary" onClick={() => setShowRelocForm(false)}>取消</button><button className="btn-primary" onClick={() => {
-              const cust = customers.find(c => c.plotPosition === relocForm.fromPlot)
-              if (cust) {
-                const info: RelocationInfo = { type: relocForm.type, fromPlot: relocForm.fromPlot, toPlot: relocForm.toPlot, reason: relocForm.reason, status: 'pending', fee: relocForm.fee }
-                useStore.setState(s => ({ customers: s.customers.map(c => c.id === cust.id ? { ...c, relocationRequest: info } : c) }))
-              }
+              if (!relocForm.customerId) return
+              const info: RelocationInfo = { type: relocForm.type, fromPlot: relocForm.fromPlot, toPlot: relocForm.toPlot, reason: relocForm.reason, status: 'pending', fee: relocForm.fee }
+              addRelocation(relocForm.customerId, info)
               setShowRelocForm(false)
-              setRelocForm({ type: 'relocate_out', fromPlot: '', toPlot: '', reason: '', fee: 0 })
+              setRelocForm({ customerId: '', type: 'relocate_out', fromPlot: '', toPlot: '', reason: '', fee: 0 })
             }}>提交</button></div>
           </div>
         </div>

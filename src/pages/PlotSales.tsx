@@ -2,16 +2,10 @@ import { useState } from 'react'
 import { useStore } from '@/store'
 import type { SalesContract, ContractStatus } from '@/types'
 import { ShoppingBag, Plus, Search, Eye, Printer, X } from 'lucide-react'
+import { maskIdCard, maskPhone, generateUniqueId } from '@/utils/helpers'
 
-const statusLabels: Record<ContractStatus, string> = {
-  pending: '待签', signed: '已签', completed: '已完成', cancelled: '已取消',
-}
-const statusBadgeClass: Record<ContractStatus, string> = {
-  pending: 'bg-amber-50 text-amber-700',
-  signed: 'bg-sky-50 text-sky-700',
-  completed: 'bg-emerald-50 text-emerald-700',
-  cancelled: 'bg-red-50 text-red-700',
-}
+const statusLabels: Record<ContractStatus, string> = { pending: '待签', signed: '已签', completed: '已完成', cancelled: '已取消' }
+const statusBadgeClass: Record<ContractStatus, string> = { pending: 'bg-amber-50 text-amber-700', signed: 'bg-sky-50 text-sky-700', completed: 'bg-emerald-50 text-emerald-700', cancelled: 'bg-red-50 text-red-700' }
 
 const emptyForm = { buyerName: '', buyerPhone: '', buyerIdCard: '', deceasedName: '', plotId: '', paymentMethod: 'full' as 'full' | 'installment', notes: '' }
 
@@ -22,6 +16,8 @@ export default function PlotSales() {
   const [statusFilter, setStatusFilter] = useState<ContractStatus | 'all'>('all')
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
   const [form, setForm] = useState(emptyForm)
+  const [saving, setSaving] = useState(false)
+  const [validationError, setValidationError] = useState('')
 
   const availablePlots = plots.filter(p => p.status === 'available')
   const selectedPlot = plots.find(p => p.id === form.plotId)
@@ -42,28 +38,42 @@ export default function PlotSales() {
   const pendingCount = contracts.filter(c => c.status === 'pending').length
   const totalAmount = monthContracts.reduce((s, c) => s + c.price, 0)
 
+  const validate = (): string => {
+    const name = form.buyerName.trim()
+    if (!name) return '请输入购墓人姓名'
+    if (!/^\d{7,}$/.test(form.buyerPhone)) return '联系电话格式不正确（需为数字且至少7位）'
+    if (form.buyerIdCard.length < 15) return '身份证号格式不正确（至少15位）'
+    if (!form.plotId) return '请选择墓位'
+    return ''
+  }
+
   const handleSave = () => {
-    if (!form.buyerName || !form.buyerPhone || !form.buyerIdCard || !form.plotId) return
+    const error = validate()
+    if (error) { setValidationError(error); return }
+    setValidationError('')
+    setSaving(true)
+    const uid = generateUniqueId()
     const contract: SalesContract = {
-      id: `c-${Date.now()}`,
-      contractNo: `HT${Date.now().toString().slice(-8)}`,
+      id: `c-${uid}`,
+      contractNo: `HT${uid.slice(-8)}`,
       plotId: form.plotId,
       plotPosition: selectedPlot?.position || '',
-      buyerName: form.buyerName,
+      buyerName: form.buyerName.trim(),
       buyerPhone: form.buyerPhone,
       buyerIdCard: form.buyerIdCard,
-      deceasedName: form.deceasedName || undefined,
+      deceasedName: form.deceasedName.trim() || undefined,
       price: selectedPlot?.price || 0,
       paymentMethod: form.paymentMethod,
-      paidAmount: 0,
+      paidAmount: form.paymentMethod === 'full' ? (selectedPlot?.price || 0) : 0,
       status: 'pending',
       signingDate: new Date().toISOString().split('T')[0],
-      notes: form.notes || undefined,
+      notes: form.notes.trim() || undefined,
     }
     addContract(contract)
     setPlotStatus(form.plotId, 'reserved')
     setShowModal(false)
     setForm(emptyForm)
+    setSaving(false)
   }
 
   return (
@@ -134,7 +144,7 @@ export default function PlotSales() {
                 <td className="px-4 py-3 font-medium text-[#1B3A2D]">{c.contractNo}</td>
                 <td className="px-4 py-3">{c.plotPosition}</td>
                 <td className="px-4 py-3">{c.buyerName}</td>
-                <td className="px-4 py-3">{c.buyerPhone}</td>
+                <td className="px-4 py-3">{maskPhone(c.buyerPhone)}</td>
                 <td className="px-4 py-3 text-[#C4A35A] font-semibold">¥{c.price.toLocaleString()}</td>
                 <td className="px-4 py-3">{c.paymentMethod === 'full' ? '全款' : '分期'}</td>
                 <td className="px-4 py-3">
@@ -162,6 +172,7 @@ export default function PlotSales() {
               <h2 className="section-title">新增合同</h2>
               <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
             </div>
+            {validationError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{validationError}</p>}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-gray-500 mb-1">购墓人姓名 *</label>
@@ -203,8 +214,8 @@ export default function PlotSales() {
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">
-              <button className="btn-secondary" onClick={() => setShowModal(false)}>取消</button>
-              <button className="btn-primary" onClick={handleSave}>保存</button>
+              <button className="btn-secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</button>
+              <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存'}</button>
             </div>
           </div>
         </div>

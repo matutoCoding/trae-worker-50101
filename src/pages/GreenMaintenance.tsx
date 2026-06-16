@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths, isSameDay } from 'date-fns'
 import { TreePine, Plus, Calendar, List, Play, CheckCircle, Clock, MapPin } from 'lucide-react'
 import { useStore } from '@/store'
-import type { MaintenanceTask } from '@/types'
+import type { MaintenanceType, MaintenanceTask } from '@/types'
+import { generateUniqueId } from '@/utils/helpers'
 
 const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   greening: { label: '绿化', color: 'text-emerald-700', bg: 'bg-emerald-100' },
@@ -18,7 +19,7 @@ const TYPE_DOT: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = { pending: '待执行', in_progress: '进行中', completed: '已完成' }
 
 type ViewMode = 'list' | 'calendar'
-type TaskForm = { areaId: string; type: string; description: string; scheduledDate: string; assignee: string }
+type TaskForm = { areaId: string; type: MaintenanceType; description: string; scheduledDate: string; assignee: string }
 
 const emptyForm: TaskForm = { areaId: '', type: 'greening', description: '', scheduledDate: '', assignee: '' }
 
@@ -27,6 +28,7 @@ export default function GreenMaintenance() {
   const [view, setView] = useState<ViewMode>('list')
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<TaskForm>(emptyForm)
+  const [saving, setSaving] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
 
@@ -46,8 +48,6 @@ export default function GreenMaintenance() {
     return eachDayOfInterval({ start, end })
   }, [currentMonth])
 
-  const startWeekday = getDay(startOfMonth(currentMonth))
-
   const tasksByDate = useMemo(() => {
     const map = new Map<string, string[]>()
     maintenance.forEach((t) => {
@@ -63,15 +63,20 @@ export default function GreenMaintenance() {
     : maintenance
 
   const handleSubmit = () => {
-    if (!form.areaId || !form.description || !form.scheduledDate || !form.assignee) return
+    if (saving) return
+    const trimmedDesc = form.description.trim()
+    const trimmedAssignee = form.assignee.trim()
+    if (!form.areaId || !trimmedDesc || !form.scheduledDate || !trimmedAssignee) return
+    setSaving(true)
     const area = areas.find((a) => a.id === form.areaId)
     addMaintenanceTask({
-      id: `mt-${Date.now()}`, areaId: form.areaId, areaName: area?.name || '',
-      type: form.type as TaskForm['type'] as MaintenanceTask['type'],
-      scheduledDate: form.scheduledDate, assignee: form.assignee,
-      status: 'pending', description: form.description,
+      id: generateUniqueId(), areaId: form.areaId, areaName: area?.name || '',
+      type: form.type as MaintenanceType,
+      scheduledDate: form.scheduledDate, assignee: trimmedAssignee,
+      status: 'pending', description: trimmedDesc,
     })
     setForm(emptyForm)
+    setSaving(false)
     setShowModal(false)
   }
 
@@ -150,7 +155,7 @@ export default function GreenMaintenance() {
             {['日','一','二','三','四','五','六'].map((d) => <div key={d}>{d}</div>)}
           </div>
           <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: startWeekday }).map((_, i) => <div key={`e-${i}`} />)}
+            {Array.from({ length: getDay(startOfMonth(currentMonth)) }).map((_, i) => <div key={`e-${i}`} />)}
             {monthDays.map((day) => {
               const key = format(day, 'yyyy-MM-dd')
               const types = tasksByDate.get(key) || []
@@ -205,7 +210,7 @@ export default function GreenMaintenance() {
               </div>
               <div>
                 <label className="text-xs text-charcoal/60 mb-1 block">任务类型</label>
-                <select className="select-field w-full" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+                <select className="select-field w-full" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as MaintenanceType })}>
                   {Object.entries(TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                 </select>
               </div>
@@ -224,7 +229,7 @@ export default function GreenMaintenance() {
             </div>
             <div className="flex justify-end gap-3 mt-5">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm rounded-lg border border-[#E2DDD5] text-charcoal/70 hover:bg-white transition-colors">取消</button>
-              <button onClick={handleSubmit} className="btn-primary">确认添加</button>
+              <button onClick={handleSubmit} disabled={saving} className={`btn-primary ${saving ? 'opacity-50 cursor-not-allowed' : ''}`}>{saving ? '提交中...' : '确认添加'}</button>
             </div>
           </div>
         </div>

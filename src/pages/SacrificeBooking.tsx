@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
+import { clampNumber, generateUniqueId, maskPhone } from '@/utils/helpers'
 import { Flame, Calendar, Users, Clock, Plus, Check, X, Camera } from 'lucide-react'
 import type { SacrificeBooking, SacrificeStatus, SacrificeType, ProxyServiceType } from '@/types'
 
@@ -28,6 +29,7 @@ export default function SacrificeBooking() {
   const [typeFilter, setTypeFilter] = useState<'all' | SacrificeType>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | SacrificeStatus>('all')
   const [showModal, setShowModal] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     plotId: '', visitorName: '', visitorPhone: '', visitDate: dateFilter,
     timeSlot: TIME_SLOTS[0], visitorCount: 1, type: 'self' as SacrificeType,
@@ -43,7 +45,7 @@ export default function SacrificeBooking() {
   const slotCounts = useMemo(() => {
     const m: Record<string, number> = {}
     TIME_SLOTS.forEach(t => m[t] = 0)
-    sacrifices.filter(s => s.visitDate === dateFilter && s.status !== 'cancelled').forEach(s => { m[s.timeSlot] = (m[s.timeSlot] || 0) + 1 })
+    sacrifices.filter(s => s.visitDate === dateFilter && s.status !== 'cancelled').forEach(s => { if (TIME_SLOTS.includes(s.timeSlot)) m[s.timeSlot] = (m[s.timeSlot] || 0) + 1 })
     return m
   }, [sacrifices, dateFilter])
 
@@ -57,17 +59,22 @@ export default function SacrificeBooking() {
   }
 
   const handleAdd = () => {
+    if (saving) return
     const plot = plots.find(p => p.id === form.plotId)
-    if (!plot || !form.visitorName || !form.visitorPhone) return
+    const name = form.visitorName.trim()
+    const phone = form.visitorPhone.trim()
+    if (!plot || !name || !phone || !/^\d{7,}$/.test(phone)) return
+    setSaving(true)
     const booking: SacrificeBooking = {
-      id: `S${Date.now()}`, plotId: form.plotId, plotPosition: plot.position,
-      visitorName: form.visitorName, visitorPhone: form.visitorPhone,
+      id: generateUniqueId(), plotId: form.plotId, plotPosition: plot.position,
+      visitorName: name, visitorPhone: phone,
       visitDate: form.visitDate, timeSlot: form.timeSlot, visitorCount: form.visitorCount,
       type: form.type, status: 'pending',
       ...(form.type === 'proxy' ? { proxyService: { serviceType: form.serviceType, flowerRequired: form.flowerRequired, incenseRequired: form.incenseRequired, specialRequests: form.specialRequests || undefined } } : {}),
     }
     addSacrifice(booking)
     setShowModal(false)
+    setSaving(false)
     setForm({ plotId: '', visitorName: '', visitorPhone: '', visitDate: dateFilter, timeSlot: TIME_SLOTS[0], visitorCount: 1, type: 'self', serviceType: 'basic', flowerRequired: true, incenseRequired: true, specialRequests: '' })
   }
 
@@ -142,7 +149,7 @@ export default function SacrificeBooking() {
                 ) : filtered.map(s => (
                   <tr key={s.id} className="table-row">
                     <td className="px-4 py-3 font-medium">{s.visitorName}</td>
-                    <td className="px-4 py-3 text-gray-500">{s.visitorPhone}</td>
+                    <td className="px-4 py-3 text-gray-500">{maskPhone(s.visitorPhone)}</td>
                     <td className="px-4 py-3">{s.plotPosition}</td>
                     <td className="px-4 py-3">{s.visitDate}</td>
                     <td className="px-4 py-3">{s.timeSlot}</td>
@@ -173,7 +180,7 @@ export default function SacrificeBooking() {
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="font-medium text-charcoal">{s.plotPosition}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">委托人：{s.visitorName} · {s.visitorPhone}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">委托人：{s.visitorName} · {maskPhone(s.visitorPhone)}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`badge ${SERVICE_MAP[s.proxyService.serviceType].cls}`}>{SERVICE_MAP[s.proxyService.serviceType].label}</span>
@@ -214,7 +221,7 @@ export default function SacrificeBooking() {
                 <div><label className="text-xs text-gray-500 mb-1 block">时段</label><select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="select-field">{TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs text-gray-500 mb-1 block">人数</label><input type="number" min={1} max={20} value={form.visitorCount} onChange={e => setForm({ ...form, visitorCount: Number(e.target.value) })} className="input-field" /></div>
+                <div><label className="text-xs text-gray-500 mb-1 block">人数</label><input type="number" min={1} max={20} value={form.visitorCount} onChange={e => setForm({ ...form, visitorCount: clampNumber(Number(e.target.value), 1, 20) })} className="input-field" /></div>
                 <div><label className="text-xs text-gray-500 mb-1 block">类型</label><select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as SacrificeType })} className="select-field"><option value="self">自行祭扫</option><option value="proxy">代客祭扫</option></select></div>
               </div>
               {form.type === 'proxy' && (
@@ -230,7 +237,7 @@ export default function SacrificeBooking() {
             </div>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setShowModal(false)} className="btn-secondary">取消</button>
-              <button onClick={handleAdd} className="btn-primary">确认预约</button>
+              <button onClick={handleAdd} disabled={saving} className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">{saving ? '提交中...' : '确认预约'}</button>
             </div>
           </div>
         </div>

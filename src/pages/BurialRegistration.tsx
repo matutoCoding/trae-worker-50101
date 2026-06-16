@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
+import { safeParseDate, generateUniqueId, maskIdCard } from '@/utils/helpers'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, addMonths, subMonths } from 'date-fns'
 import { BookOpen, Calendar, Plus, CheckCircle, Clock, Eye, PenTool } from 'lucide-react'
 import type { BurialRecord, BurialStatus, InscriptionStatus } from '@/types'
@@ -9,6 +10,18 @@ const STATUS_MAP: Record<BurialStatus, { label: string; cls: string }> = {
   preparing: { label: '准备中', cls: 'bg-amber-50 text-amber-700' },
   in_progress: { label: '进行中', cls: 'bg-purple-50 text-purple-700' },
   completed: { label: '已完成', cls: 'bg-emerald-50 text-emerald-700' },
+}
+
+const NEXT_STATUS: Record<Exclude<BurialStatus, 'completed'>, BurialStatus> = {
+  scheduled: 'preparing',
+  preparing: 'in_progress',
+  in_progress: 'completed',
+}
+
+const NEXT_STATUS_LABEL: Record<Exclude<BurialStatus, 'completed'>, string> = {
+  scheduled: '开始准备',
+  preparing: '开始安葬',
+  in_progress: '完成安葬',
 }
 
 const INSCR_STATUS_MAP: Record<InscriptionStatus, { label: string; cls: string }> = {
@@ -22,7 +35,7 @@ const FONT_LABELS = { regular: '常规体', bold: '粗体', traditional: '繁体
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
 export default function BurialRegistration() {
-  const { burials, plots, addBurial, updateBurialStatus } = useStore()
+  const { burials, plots, addBurial, updateBurialStatus, updateInscription } = useStore()
   const [tab, setTab] = useState<'booking' | 'inscription'>('booking')
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(new Date())
@@ -53,7 +66,7 @@ export default function BurialRegistration() {
     const plot = plots.find(p => p.id === form.plotId)
     if (!plot || !form.deceasedName || !form.deathDate || !form.burialDate) return
     addBurial({
-      id: `B${Date.now()}`, plotId: form.plotId, plotPosition: plot.position,
+      id: generateUniqueId(), plotId: form.plotId, plotPosition: plot.position,
       deceasedName: form.deceasedName, deceasedIdCard: form.deceasedIdCard,
       deathDate: form.deathDate, burialDate: form.burialDate,
       burialTimeSlot: form.burialTimeSlot, status: 'scheduled',
@@ -66,7 +79,7 @@ export default function BurialRegistration() {
     if (!inscription) return
     const next: Record<InscriptionStatus, InscriptionStatus> = { pending: 'confirmed', confirmed: 'engraved', engraved: 'engraved' }
     const updated = { ...inscription, status: next[inscription.status] }
-    useStore.setState(s => ({ burials: s.burials.map(b => b.id === burialId ? { ...b, inscription: updated } : b) }))
+    updateInscription(burialId, updated)
   }
 
   return (
@@ -88,7 +101,7 @@ export default function BurialRegistration() {
       {tab === 'booking' && (
         <>
           <div className="flex items-center gap-3 mb-4 flex-wrap">
-            <input type="date" value={format(selectedDate, 'yyyy-MM-dd')} onChange={e => setSelectedDate(new Date(e.target.value))} className="input-field w-40" />
+            <input type="date" value={format(selectedDate, 'yyyy-MM-dd')} onChange={e => { const d = safeParseDate(e.target.value); if (d) setSelectedDate(d) }} className="input-field w-40" />
             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'all' | BurialStatus)} className="select-field w-28">
               <option value="all">全部</option>
               {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -131,13 +144,13 @@ export default function BurialRegistration() {
               <div key={b.id} className="card p-4 flex items-center gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-charcoal">{b.deceasedName}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">{b.plotPosition} · {b.burialTimeSlot}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">{b.plotPosition} · {b.burialTimeSlot}{b.deceasedIdCard && ` · ${maskIdCard(b.deceasedIdCard)}`}</div>
                 </div>
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_MAP[b.status].cls}`}>{STATUS_MAP[b.status].label}</span>
                 <div className="flex gap-1">
                   <button className="btn-ghost text-xs px-2 py-1"><Eye className="w-3 h-3" /></button>
                   {b.status !== 'completed' && (
-                    <button onClick={() => updateBurialStatus(b.id, 'completed')} className="btn-ghost text-xs px-2 py-1 text-emerald-600"><CheckCircle className="w-3 h-3" /></button>
+                    <button onClick={() => updateBurialStatus(b.id, NEXT_STATUS[b.status])} className="btn-ghost text-xs px-2 py-1 text-emerald-600"><CheckCircle className="w-3 h-3" /><span className="ml-1">{NEXT_STATUS_LABEL[b.status]}</span></button>
                   )}
                 </div>
               </div>
@@ -157,7 +170,7 @@ export default function BurialRegistration() {
                   <div className="font-medium text-charcoal">{b.deceasedName}</div>
                   <div className="text-xs text-gray-400 mt-0.5">{b.plotPosition} · {FONT_LABELS[b.inscription.fontStyle]}</div>
                 </div>
-                <span className="text-xs text-gray-400 truncate max-w-[120px]">{b.inscription.content.slice(0, 20)}…</span>
+                <span className="text-xs text-gray-400 truncate max-w-[120px]">{(b.inscription.content || '').slice(0, 20)}…</span>
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${INSCR_STATUS_MAP[b.inscription.status].cls}`}>{INSCR_STATUS_MAP[b.inscription.status].label}</span>
                 <button className="btn-ghost text-xs px-2 py-1"><Eye className="w-3 h-3" /></button>
               </div>

@@ -1,20 +1,17 @@
 import { useState, useMemo } from 'react'
 import { Wallet, AlertTriangle, CheckCircle, Clock, DollarSign, CreditCard, Plus, X } from 'lucide-react'
-import { differenceInDays, format, parseISO } from 'date-fns'
+import { differenceInDays, format } from 'date-fns'
 import { useStore } from '@/store'
+import { safeParseDate } from '@/utils/helpers'
 import type { FeeRecord, FeeStatus } from '@/types'
 
 const FEE_TYPE_LABEL: Record<string, string> = {
   management: '管理费', maintenance: '维护费', burial: '安葬费', inscription: '刻碑费', relocation: '迁坟费',
 }
-
 const STATUS_BADGE: Record<FeeStatus, string> = {
-  unpaid: 'badge bg-amber-50 text-amber-700',
-  partial: 'badge bg-sky-50 text-sky-700',
-  paid: 'badge bg-emerald-50 text-emerald-700',
-  overdue: 'badge bg-red-50 text-red-700',
+  unpaid: 'badge bg-amber-50 text-amber-700', partial: 'badge bg-sky-50 text-sky-700',
+  paid: 'badge bg-emerald-50 text-emerald-700', overdue: 'badge bg-red-50 text-red-700',
 }
-
 const STATUS_LABEL: Record<FeeStatus, string> = {
   unpaid: '未缴', partial: '部分缴纳', paid: '已缴', overdue: '逾期',
 }
@@ -25,21 +22,34 @@ function remainingBadge(days: number) {
   return { icon: '🔴', cls: 'text-red-600', label: '紧急' }
 }
 
+function getDisplayStatus(status: FeeStatus, dueDate: string): FeeStatus {
+  if (status === 'unpaid') {
+    const d = safeParseDate(dueDate)
+    if (d && differenceInDays(d, new Date()) < 0) return 'overdue'
+  }
+  return status
+}
+
 export default function FeeManagement() {
   const { fees, updateFeeStatus } = useStore()
   const [modalFee, setModalFee] = useState<FeeRecord | null>(null)
   const [payAmount, setPayAmount] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [payError, setPayError] = useState('')
 
-  const overdueFees = useMemo(() => fees.filter((f) => f.status === 'overdue'), [fees])
+  const ds = (f: FeeRecord) => getDisplayStatus(f.status, f.dueDate)
+  const fmtDate = (s: string) => { const d = safeParseDate(s); return d ? format(d, 'yyyy-MM-dd') : '-' }
+
+  const overdueFees = useMemo(() => fees.filter((f) => ds(f) === 'overdue'), [fees])
 
   const summary = useMemo(() => {
-    const pending = fees.filter((f) => f.status === 'unpaid' || f.status === 'partial' || f.status === 'overdue')
-    const paid = fees.filter((f) => f.status === 'paid')
-    const overdue = fees.filter((f) => f.status === 'overdue')
     const now = new Date()
+    const pending = fees.filter((f) => ds(f) !== 'paid')
+    const paid = fees.filter((f) => f.status === 'paid')
+    const overdue = fees.filter((f) => ds(f) === 'overdue')
     const thisMonth = fees.filter((f) => {
-      const d = parseISO(f.dueDate)
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && f.status !== 'paid'
+      const d = safeParseDate(f.dueDate)
+      return d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && f.status !== 'paid'
     })
     return {
       unpaidTotal: pending.reduce((s, f) => s + f.amount - f.paidAmount, 0),
@@ -53,25 +63,23 @@ export default function FeeManagement() {
     const now = new Date()
     return fees
       .filter((f) => f.status !== 'paid')
-      .map((f) => ({ ...f, daysLeft: differenceInDays(parseISO(f.dueDate), now) }))
-      .filter((f) => f.daysLeft <= 30 || f.daysLeft < 0)
+      .map((f) => ({ ...f, daysLeft: (() => { const d = safeParseDate(f.dueDate); return d ? differenceInDays(d, now) : 999 })() }))
+      .filter((f) => f.daysLeft <= 30)
       .sort((a, b) => a.daysLeft - b.daysLeft)
   }, [fees])
 
-  const openModal = (fee: FeeRecord) => {
-    setModalFee(fee)
-    setPayAmount(String(fee.amount - fee.paidAmount))
-  }
+  const openModal = (fee: FeeRecord) => { setModalFee(fee); setPayAmount(String(fee.amount - fee.paidAmount)); setPayError('') }
 
   const handlePay = () => {
-    if (!modalFee || !payAmount) return
+    if (!modalFee || saving) return
     const amount = Number(payAmount)
+    if (isNaN(amount) || amount <= 0) { setPayError('请输入有效的正数金额'); return }
     const remaining = modalFee.amount - modalFee.paidAmount
-    const newPaid = modalFee.paidAmount + Math.min(amount, remaining)
-    const newStatus: FeeStatus = newPaid >= modalFee.amount ? 'paid' : 'partial'
-    updateFeeStatus(modalFee.id, newStatus, newPaid)
-    setModalFee(null)
-    setPayAmount('')
+    if (amount > remaining) { setPayError(`收款金额不能超过待缴金额 ¥${remaining.toLocaleString()}`); return }
+    setSaving(true)
+    const newPaid = modalFee.paidAmount + amount
+    updateFeeStatus(modalFee.id, newPaid >= modalFee.amount ? 'paid' : 'partial', newPaid)
+    setSaving(false); setModalFee(null); setPayAmount(''); setPayError('')
   }
 
   const summaryCards = [
@@ -85,9 +93,7 @@ export default function FeeManagement() {
     <div className="space-y-6 font-sans">
       <div className="flex items-center justify-between">
         <h1 className="section-title text-xl">费用管理</h1>
-        <button className="btn-primary flex items-center gap-2">
-          <Plus className="w-4 h-4" /> 生成账单
-        </button>
+        <button className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> 生成账单</button>
       </div>
 
       {overdueFees.length > 0 && (
@@ -102,9 +108,7 @@ export default function FeeManagement() {
           <div key={label} className="card p-5 flex items-start gap-3">
             <div className={`w-1 h-12 rounded-full ${accent} shrink-0`} />
             <div className="flex-1">
-              <div className="flex items-center gap-2 text-sm text-charcoal/60">
-                <Icon className="w-4 h-4" />{label}
-              </div>
+              <div className="flex items-center gap-2 text-sm text-charcoal/60"><Icon className="w-4 h-4" />{label}</div>
               <div className="mt-1 text-2xl font-bold text-gold font-serif">{value}</div>
             </div>
           </div>
@@ -125,25 +129,22 @@ export default function FeeManagement() {
             <tbody>
               {renewals.map((f) => {
                 const rb = remainingBadge(f.daysLeft)
+                const status = ds(f)
                 return (
                   <tr key={f.id} className="table-row">
                     <td className="px-3 py-2 whitespace-nowrap">{f.plotPosition}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{f.contractNo}</td>
                     <td className="px-3 py-2">{FEE_TYPE_LABEL[f.feeType]}</td>
                     <td className="px-3 py-2">¥{f.amount.toLocaleString()}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{format(parseISO(f.dueDate), 'yyyy-MM-dd')}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(f.dueDate)}</td>
                     <td className={`px-3 py-2 font-medium ${rb.cls}`}>{f.daysLeft < 0 ? `逾期${Math.abs(f.daysLeft)}天` : `${f.daysLeft}天`}</td>
                     <td className="px-3 py-2">{rb.icon} {rb.label}</td>
-                    <td className="px-3 py-2"><span className={STATUS_BADGE[f.status]}>{STATUS_LABEL[f.status]}</span></td>
-                    <td className="px-3 py-2">
-                      <button onClick={() => openModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button>
-                    </td>
+                    <td className="px-3 py-2"><span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span></td>
+                    <td className="px-3 py-2"><button onClick={() => openModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button></td>
                   </tr>
                 )
               })}
-              {renewals.length === 0 && (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-charcoal/40">暂无续缴提醒</td></tr>
-              )}
+              {renewals.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-charcoal/40">暂无续缴提醒</td></tr>}
             </tbody>
           </table>
         </div>
@@ -161,23 +162,24 @@ export default function FeeManagement() {
               </tr>
             </thead>
             <tbody>
-              {fees.map((f) => (
-                <tr key={f.id} className="table-row">
-                  <td className="px-3 py-2 whitespace-nowrap">{f.plotPosition}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{f.contractNo}</td>
-                  <td className="px-3 py-2">{FEE_TYPE_LABEL[f.feeType]}</td>
-                  <td className="px-3 py-2">¥{f.amount.toLocaleString()}</td>
-                  <td className="px-3 py-2">¥{f.paidAmount.toLocaleString()}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{format(parseISO(f.dueDate), 'yyyy-MM-dd')}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{f.paidDate ? format(parseISO(f.paidDate), 'yyyy-MM-dd') : '-'}</td>
-                  <td className="px-3 py-2"><span className={STATUS_BADGE[f.status]}>{STATUS_LABEL[f.status]}</span></td>
-                  <td className="px-3 py-2">
-                    {f.status !== 'paid' && (
-                      <button onClick={() => openModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {fees.map((f) => {
+                const status = ds(f)
+                return (
+                  <tr key={f.id} className="table-row">
+                    <td className="px-3 py-2 whitespace-nowrap">{f.plotPosition}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{f.contractNo}</td>
+                    <td className="px-3 py-2">{FEE_TYPE_LABEL[f.feeType]}</td>
+                    <td className="px-3 py-2">¥{f.amount.toLocaleString()}</td>
+                    <td className="px-3 py-2">¥{f.paidAmount.toLocaleString()}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(f.dueDate)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{f.paidDate ? fmtDate(f.paidDate) : '-'}</td>
+                    <td className="px-3 py-2"><span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span></td>
+                    <td className="px-3 py-2">
+                      {f.status !== 'paid' && <button onClick={() => openModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button>}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -202,20 +204,16 @@ export default function FeeManagement() {
               <label className="block text-sm text-charcoal/60 mb-1">收款金额</label>
               <div className="relative">
                 <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal/30" />
-                <input
-                  type="number"
-                  className="input-field pl-9"
-                  value={payAmount}
-                  onChange={(e) => setPayAmount(e.target.value)}
-                  max={modalFee.amount - modalFee.paidAmount}
-                  min={0}
-                />
+                <input type="number" className="input-field pl-9" value={payAmount}
+                  onChange={(e) => { setPayAmount(e.target.value); setPayError('') }}
+                  max={modalFee.amount - modalFee.paidAmount} min={0} />
               </div>
+              {payError && <p className="text-xs text-red-500 mt-1">{payError}</p>}
             </div>
             <div className="flex gap-3">
               <button onClick={() => setModalFee(null)} className="btn-secondary flex-1">取消</button>
-              <button onClick={handlePay} className="btn-primary flex-1 flex items-center justify-center gap-2">
-                <CreditCard className="w-4 h-4" /> 确认收款
+              <button onClick={handlePay} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-2">
+                <CreditCard className="w-4 h-4" /> {saving ? '处理中...' : '确认收款'}
               </button>
             </div>
           </div>
