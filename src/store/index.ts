@@ -18,6 +18,8 @@ import type {
   RelocationStatus,
   FollowUpRecord,
   PaymentHistoryEntry,
+  PaymentPlanItem,
+  ContractPaymentEntry,
 } from '@/types'
 import {
   cemeteryPlots as initialPlots,
@@ -61,11 +63,17 @@ function loadPersistedData(): AppData | null {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.plots)) {
         const data = parsed as AppData
-        // Migrate: fee records need paymentHistory array
         if (data.fees && data.fees.length > 0) {
           data.fees = data.fees.map((f) => ({
             ...f,
-            paymentHistory: Array.isArray(f.paymentHistory) ? f.paymentHistory : (f.paidAmount > 0 && f.paidDate ? [{ id: `migrated-${f.id}`, amount: f.paidAmount, date: f.paidDate }] : []),
+            paymentHistory: Array.isArray(f.paymentHistory) ? f.paymentHistory : (f.paidAmount > 0 && f.paidDate ? [{ id: `migrated-${f.id}`, amount: f.paidAmount, date: f.paidDate, remainingAfter: Math.max(0, f.amount - f.paidAmount) }] : []),
+          }))
+        }
+        if (data.contracts && data.contracts.length > 0) {
+          data.contracts = data.contracts.map((c: any) => ({
+            ...c,
+            paymentPlan: Array.isArray(c.paymentPlan) ? c.paymentPlan : [],
+            paymentHistory: Array.isArray(c.paymentHistory) ? c.paymentHistory : (c.paidAmount > 0 && c.signingDate ? [{ id: `migrated-ct-${c.id}`, amount: c.paidAmount, date: c.signingDate, remainingAfter: Math.max(0, c.price - c.paidAmount) }] : []),
           }))
         }
         return data
@@ -118,11 +126,14 @@ interface AppState extends AppData {
   updateCustomerNextFollowUp: (customerId: string, nextDate: string) => void
   updateCustomerPlot: (customerId: string, plotId: string, plotPosition: string) => void
   updateRelocationStatus: (customerId: string, status: RelocationStatus) => void
+  updateRelocationRemark: (customerId: string, remark: string) => void
   addRelocation: (customerId: string, info: RelocationInfo) => void
   completeRelocation: (customerId: string) => void
   addFee: (fee: FeeRecord) => void
   updateFeeStatus: (feeId: string, status: FeeStatus, paidAmount?: number) => void
   addFeePayment: (feeId: string, amount: number) => void
+  addPaymentPlanItem: (contractId: string, item: Omit<PaymentPlanItem, 'id' | 'status'>) => void
+  addContractPayment: (contractId: string, amount: number, planId?: string) => { ok: boolean; message?: string }
   resetData: () => void
 }
 
@@ -276,10 +287,11 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => {
       const customer = state.customers.find((c) => c.id === customerId)
       if (!customer || !customer.relocationRequest) return state
+      const today = new Date().toISOString().split('T')[0]
       const partialState: Partial<AppData> = {
         customers: state.customers.map((c) =>
           c.id === customerId && c.relocationRequest
-            ? { ...c, relocationRequest: { ...c.relocationRequest, status } }
+            ? { ...c, relocationRequest: { ...c.relocationRequest, status, completedDate: status === 'completed' ? today : c.relocationRequest.completedDate } }
             : c
         ),
       }
@@ -356,11 +368,12 @@ export const useStore = create<AppState>((set, get) => ({
   addFeePayment: (feeId, amount) =>
     set((state) => {
       const today = new Date().toISOString().split('T')[0]
-      const entry: PaymentHistoryEntry = { id: generateUniqueId(), amount, date: today }
       const newState = {
         fees: state.fees.map((f) => {
           if (f.id !== feeId) return f
           const newPaid = f.paidAmount + amount
+          const remaining = Math.max(0, f.amount - newPaid)
+          const entry: PaymentHistoryEntry = { id: generateUniqueId(), amount, date: today, remainingAfter: remaining }
           const isFullyPaid = newPaid >= f.amount
           let newStatus: FeeStatus = f.status
           if (isFullyPaid) {
@@ -382,6 +395,86 @@ export const useStore = create<AppState>((set, get) => ({
       persistData({ ...state, ...newState })
       return newState
     }),
+
+  updateRelocationRemark: (customerId, remark) =>
+    set((state) => {
+      const newState = {
+        customers: state.customers.map((c) =>
+          c.id === customerId && c.relocationRequest
+            ? { ...c, relocationRequest: { ...c.relocationRequest, remark } }
+            : c
+        ),
+      }
+      persistData({ ...state, ...newState })
+      return newState
+    }),
+
+  addPaymentPlanItem: (contractId, item) =>
+    set((state) => {
+      const planItem: PaymentPlanItem = {
+        id: generateUniqueId(),
+        dueDate: item.dueDate,
+        amount: item.amount,
+        status: 'unpaid',
+        paidDate: item.paidDate,
+        paidAmount: item.paidAmount,
+      }
+      const newState = {
+        contracts: state.contracts.map((c) =>
+          c.id === contractId ? { ...c, paymentPlan: [...c.paymentPlan, planItem] } : c
+        ),
+      }
+      persistData({ ...state, ...newState })
+      return newState
+    }),
+
+  addContractPayment: (contractId, amount, planId) => {
+    const { contracts } = get()
+    const contract = contracts.find((c) => c.id === contractId)
+    if (!contract) return { ok: false, message: '合同不存在' }
+    if (amount <= 0) return { ok: false, message: '收款金额必须大于0' }
+
+    const today = new Date().toISOString().split('T')[0]
+    let result: { ok: boolean; message?: string } = { ok: true }
+
+    set((state) => {
+      const newContracts = state.contracts.map((c) => {
+        if (c.id !== contractId) return c
+        const newPaidAmount = c.paidAmount + amount
+        if (newPaidAmount > c.price) {
+          result = { ok: false, message: `收款金额超出尾款，剩余尾款：¥${(c.price - c.paidAmount).toLocaleString()}` }
+          return c
+        }
+        const remainingAfter = c.price - newPaidAmount
+        const entry: ContractPaymentEntry = {
+          id: generateUniqueId(),
+          amount,
+          date: today,
+          relatedPlanId: planId,
+          remainingAfter,
+        }
+        let newPlan = c.paymentPlan
+        if (planId) {
+          newPlan = newPlan.map((p) =>
+            p.id === planId
+              ? { ...p, status: 'paid' as const, paidDate: today, paidAmount: (p.paidAmount || 0) + amount }
+              : p
+          )
+        }
+        return {
+          ...c,
+          paidAmount: newPaidAmount,
+          paymentHistory: [...c.paymentHistory, entry],
+          paymentPlan: newPlan,
+        }
+      })
+      const newState = { contracts: newContracts }
+      persistData({ ...state, ...newState })
+      return newState
+    })
+
+    return result
+  },
 
   resetData: () => {
     persistData(defaultData)

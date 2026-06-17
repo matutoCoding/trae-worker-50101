@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useStore } from '@/store'
 import type { RelocationInfo, RelocationStatus } from '@/types'
-import { maskPhone, generateUniqueId } from '@/utils/helpers'
-import { HeadphonesIcon, Search, Phone, MapPin, ArrowRightLeft, Star, Clock, X, User, FileText, Home } from 'lucide-react'
+import { maskPhone, generateUniqueId, sanitizeInput } from '@/utils/helpers'
+import { HeadphonesIcon, Search, Phone, MapPin, ArrowRightLeft, Star, Clock, X, User, FileText, Home, Calendar, Edit3, Check } from 'lucide-react'
 
 const tabs = ['墓园档案查询', '客户回访', '迁墓处理'] as const
 const followTypeLabels: Record<string, string> = { phone: '电话', visit: '上门', wechat: '微信' }
@@ -15,18 +15,21 @@ const relocStatusBadge: Record<RelocationStatus, string> = {
 const nextStatus: Record<RelocationStatus, RelocationStatus> = { pending: 'approved', approved: 'in_progress', in_progress: 'completed', completed: 'completed' }
 
 export default function CustomerService() {
-  const { customers, plots, addFollowUp, updateRelocationStatus, addRelocation } = useStore()
+  const { customers, plots, addFollowUp, updateRelocationStatus, addRelocation, updateRelocationRemark } = useStore()
   const [activeTab, setActiveTab] = useState<number>(0)
   const [searchTerm, setSearchTerm] = useState('')
   const [drawerId, setDrawerId] = useState<string | null>(null)
   const [followCustId, setFollowCustId] = useState<string | null>(null)
   const [followForm, setFollowForm] = useState({ type: 'phone' as 'phone' | 'visit' | 'wechat', content: '', satisfaction: 5 })
   const [showRelocForm, setShowRelocForm] = useState(false)
-  const [relocForm, setRelocForm] = useState({ customerId: '', type: 'relocate_out' as 'relocate_out' | 'relocate_in', fromPlot: '', toPlot: '', reason: '', fee: 0 })
+  const [relocForm, setRelocForm] = useState({ customerId: '', type: 'relocate_out' as 'relocate_out' | 'relocate_in', fromPlot: '', toPlot: '', reason: '', fee: 0, remark: '' })
+  const [remarkEditId, setRemarkEditId] = useState<string | null>(null)
+  const [remarkText, setRemarkText] = useState('')
 
   const filtered = customers.filter(c => {
     if (!searchTerm) return true
-    return c.buyerName.includes(searchTerm) || c.plotPosition.includes(searchTerm) || c.contractNo.includes(searchTerm)
+    const term = sanitizeInput(searchTerm)
+    return c.buyerName.includes(term) || c.plotPosition.includes(term) || c.contractNo.includes(term)
   })
 
   const today = new Date().toISOString().split('T')[0]
@@ -46,8 +49,9 @@ export default function CustomerService() {
   const selectedRelocCustomer = customers.find(c => c.id === relocForm.customerId)
 
   const handleAddFollowUp = () => {
-    if (!followCustId || !followForm.content) return
-    const record = { id: generateUniqueId(), date: today, type: followForm.type, content: followForm.content, satisfaction: followForm.satisfaction }
+    if (!followCustId || !followForm.content.trim()) return
+    const content = sanitizeInput(followForm.content)
+    const record = { id: generateUniqueId(), date: today, type: followForm.type, content, satisfaction: followForm.satisfaction }
     addFollowUp(followCustId, record)
     setFollowCustId(null)
     setFollowForm({ type: 'phone', content: '', satisfaction: 5 })
@@ -73,13 +77,25 @@ export default function CustomerService() {
       type: relocForm.type,
       fromPlot: relocForm.fromPlot,
       toPlot: relocForm.toPlot,
-      reason: relocForm.reason,
+      reason: sanitizeInput(relocForm.reason),
       status: 'pending',
       fee: relocForm.fee,
+      requestDate: today,
+      remark: sanitizeInput(relocForm.remark) || undefined,
     }
     addRelocation(relocForm.customerId, info)
     setShowRelocForm(false)
-    setRelocForm({ customerId: '', type: 'relocate_out', fromPlot: '', toPlot: '', reason: '', fee: 0 })
+    setRelocForm({ customerId: '', type: 'relocate_out', fromPlot: '', toPlot: '', reason: '', fee: 0, remark: '' })
+  }
+
+  const handleSaveRemark = (customerId: string) => {
+    updateRelocationRemark(customerId, sanitizeInput(remarkText))
+    setRemarkEditId(null)
+    setRemarkText('')
+  }
+
+  const openRemarkEdit = (current?: string) => {
+    setRemarkText(current || '')
   }
 
   return (
@@ -166,36 +182,61 @@ export default function CustomerService() {
           {relocationList.map(c => {
             const r = c.relocationRequest!
             return (
-              <div key={c.id} className="card p-4 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.type === 'relocate_out' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
-                    {relocTypeLabels[r.type]}
-                  </span>
-                  <div>
-                    <p className="font-medium text-[#1B3A2D]">{c.buyerName}</p>
-                    <p className="text-sm text-gray-500">原墓位: {c.plotPosition} | 目标墓位: {r.toPlot} | {r.reason}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[#C4A35A] font-semibold">¥{r.fee.toLocaleString()}</span>
-                  {r.status === 'completed' ? (
-                    <span className="text-emerald-700 font-medium text-sm">✓ 已完成</span>
-                  ) : (
-                    <>
+              <div key={c.id} className="card p-4">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.type === 'relocate_out' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                        {relocTypeLabels[r.type]}
+                      </span>
                       <span className={`px-2 py-0.5 rounded text-xs font-medium ${relocStatusBadge[r.status]}`}>{relocStatusLabels[r.status]}</span>
+                      <p className="font-medium text-[#1B3A2D]">{c.buyerName}</p>
+                      <span className="text-[#C4A35A] font-semibold text-sm">¥{r.fee.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
+                      <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-gray-400" />原墓位：<span className="font-medium text-red-600">{r.fromPlot || '-'}</span></span>
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-[#C4A35A]" />
+                      <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-gray-400" />目标墓位：<span className="font-medium text-emerald-700">{r.toPlot || '-'}</span></span>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-500 flex-wrap">
+                      <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" />申请时间：{r.requestDate || '-'}</span>
+                      <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" />完成时间：{r.completedDate || '-'}</span>
+                      <span className="inline-flex items-center gap-1"><FileText className="w-3 h-3" />原因：{r.reason || '-'}</span>
+                    </div>
+                    <div className="flex items-start gap-2 mt-1">
+                      <Edit3 className="w-3 h-3 text-gray-400 mt-0.5" />
+                      {remarkEditId === c.id ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <input className="input-field py-1 text-sm flex-1" value={remarkText} onChange={e => setRemarkText(e.target.value)} placeholder="经办备注" />
+                          <button className="btn-primary px-2 py-1 text-xs" onClick={() => handleSaveRemark(c.id)}><Check className="w-3 h-3" /></button>
+                          <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setRemarkEditId(null)}>取消</button>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-600 flex-1" onClick={() => { openRemarkEdit(r.remark); setRemarkEditId(c.id) }}>
+                          经办备注：<span className="text-[#5A8F7B]">{r.remark || '（点击填写备注）'}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 ml-4">
+                    {r.status === 'completed' ? (
+                      <span className="text-emerald-700 font-medium text-sm flex items-center gap-1"><Check className="w-4 h-4" />已完成</span>
+                    ) : (
                       <button className="btn-secondary text-xs" onClick={() => updateRelocationStatus(c.id, nextStatus[r.status])}>{relocStatusLabels[nextStatus[r.status]]}</button>
-                    </>
-                  )}
+                    )}
+                    <button className="text-[#5A8F7B] hover:text-[#1B3A2D] text-xs" onClick={() => setDrawerId(c.id)}>查看客户</button>
+                  </div>
                 </div>
               </div>
             )
           })}
+          {relocationList.length === 0 && <div className="card p-8 text-center text-gray-400">暂无迁墓申请记录</div>}
         </div>
       )}
 
       {drawerCustomer && (
         <div className="fixed inset-0 bg-black/30 z-50 flex justify-end" onClick={() => setDrawerId(null)}>
-          <div className="w-96 bg-white h-full overflow-y-auto shadow-xl p-6 space-y-6" onClick={e => e.stopPropagation()}>
+          <div className="w-[440px] bg-white h-full overflow-y-auto shadow-xl p-6 space-y-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="section-title text-lg">客户详情</h2>
               <button onClick={() => setDrawerId(null)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
@@ -207,9 +248,53 @@ export default function CustomerService() {
               <p><FileText className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.contractNo}</p>
             </div>
             <div className="space-y-1">
-              <p className="text-xs text-gray-400 gold-accent-line inline-block pb-1 mb-2">墓位信息</p>
-              <p><MapPin className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.plotPosition}</p>
+              <p className="text-xs text-gray-400 gold-accent-line inline-block pb-1 mb-2">当前墓位</p>
+              <p className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-[#1B3A2D] text-white text-sm">
+                <MapPin className="w-4 h-4 text-[#C4A35A]" />{drawerCustomer.plotPosition}
+              </p>
             </div>
+            {drawerCustomer.relocationRequest && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-400 gold-accent-line inline-block pb-1 mb-2">墓位变更流水</p>
+                <div className="bg-[#F5F3EF] rounded-lg p-4 border border-[#C4A35A]/20">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${relocStatusBadge[drawerCustomer.relocationRequest.status]}`}>
+                      {relocStatusLabels[drawerCustomer.relocationRequest.status]}
+                    </span>
+                    <span className="text-[#C4A35A] font-semibold text-sm">¥{drawerCustomer.relocationRequest.fee.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center justify-center gap-3 py-2">
+                    <div className="text-center px-3">
+                      <p className="text-xs text-gray-400 mb-1">原墓位</p>
+                      <p className="text-sm font-medium text-red-600 bg-red-50 px-2 py-1 rounded">{drawerCustomer.relocationRequest.fromPlot || '-'}</p>
+                    </div>
+                    <ArrowRightLeft className="w-5 h-5 text-[#C4A35A]" />
+                    <div className="text-center px-3">
+                      <p className="text-xs text-gray-400 mb-1">目标墓位</p>
+                      <p className="text-sm font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded">{drawerCustomer.relocationRequest.toPlot || '-'}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-xs mt-3 pt-3 border-t border-gray-200">
+                    <div>
+                      <p className="text-gray-400">申请时间</p>
+                      <p className="font-medium text-[#1B3A2D]">{drawerCustomer.relocationRequest.requestDate || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">完成时间</p>
+                      <p className="font-medium text-[#1B3A2D]">{drawerCustomer.relocationRequest.completedDate || '-'}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-gray-400">迁墓原因</p>
+                      <p className="font-medium text-[#1B3A2D]">{drawerCustomer.relocationRequest.reason || '-'}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-gray-400">经办备注</p>
+                      <p className="font-medium text-[#1B3A2D]">{drawerCustomer.relocationRequest.remark || '（暂无）'}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <p className="text-xs text-gray-400 gold-accent-line inline-block pb-1 mb-2">回访记录</p>
               <div className="relative pl-4 space-y-3">
@@ -264,7 +349,7 @@ export default function CustomerService() {
 
       {showRelocForm && (
         <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center" onClick={() => setShowRelocForm(false)}>
-          <div className="bg-white rounded-lg w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg w-full max-w-lg p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="section-title">新增迁墓申请</h2>
               <button onClick={() => setShowRelocForm(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
@@ -279,19 +364,22 @@ export default function CustomerService() {
                 <select className="select-field" value={relocForm.type} onChange={e => setRelocForm(f => ({ ...f, type: e.target.value as 'relocate_out' | 'relocate_in' }))}>
                   <option value="relocate_out">迁出</option><option value="relocate_in">迁入</option>
                 </select></div>
-              <div><label className="block text-xs text-gray-500 mb-1">费用</label>
-                <input type="number" className="input-field" value={relocForm.fee} onChange={e => setRelocForm(f => ({ ...f, fee: +e.target.value }))} /></div>
+              <div><label className="block text-xs text-gray-500 mb-1">费用 (元)</label>
+                <input type="number" min="0" className="input-field" value={relocForm.fee || ''} onChange={e => setRelocForm(f => ({ ...f, fee: Math.max(0, +e.target.value || 0) }))} /></div>
               <div><label className="block text-xs text-gray-500 mb-1">原墓位</label>
-                <input className="input-field bg-gray-50" value={selectedRelocCustomer?.plotPosition || relocForm.fromPlot} disabled readOnly /></div>
+                <input className="input-field bg-gray-50" value={selectedRelocCustomer?.plotPosition || relocForm.fromPlot || '-'} disabled readOnly /></div>
               <div><label className="block text-xs text-gray-500 mb-1">目标墓位</label>
                 <select className="select-field" value={relocForm.toPlot} onChange={e => setRelocForm(f => ({ ...f, toPlot: e.target.value }))}>
                   <option value="">请选择墓位</option>
-                  {availablePlots.map(p => <option key={p.id} value={p.position}>{p.position} (价格 ¥{p.price.toLocaleString()})</option>)}
+                  {availablePlots.map(p => <option key={p.id} value={p.position}>{p.position} (¥{p.price.toLocaleString()})</option>)}
                 </select></div>
-              <div className="col-span-2"><label className="block text-xs text-gray-500 mb-1">原因</label>
-                <input className="input-field" value={relocForm.reason} onChange={e => setRelocForm(f => ({ ...f, reason: e.target.value }))} /></div>
             </div>
-            <div className="flex justify-end gap-3"><button className="btn-secondary" onClick={() => setShowRelocForm(false)}>取消</button><button className="btn-primary" onClick={handleSubmitRelocation}>提交</button></div>
+            <div><label className="block text-xs text-gray-500 mb-1">迁墓原因</label>
+              <input className="input-field" value={relocForm.reason} onChange={e => setRelocForm(f => ({ ...f, reason: e.target.value }))} placeholder="例如：家族合葬需要、风水调整等" /></div>
+            <div><label className="block text-xs text-gray-500 mb-1">经办备注</label>
+              <textarea className="input-field min-h-[60px]" value={relocForm.remark} onChange={e => setRelocForm(f => ({ ...f, remark: e.target.value }))} placeholder="特殊要求、注意事项等" /></div>
+            <p className="text-xs text-gray-400 flex items-center gap-1"><Calendar className="w-3 h-3" />申请时间将自动记录为今天：{today}</p>
+            <div className="flex justify-end gap-3"><button className="btn-secondary" onClick={() => setShowRelocForm(false)}>取消</button><button className="btn-primary" onClick={handleSubmitRelocation}>提交申请</button></div>
           </div>
         </div>
       )}

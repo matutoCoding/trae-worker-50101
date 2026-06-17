@@ -13,7 +13,7 @@ export type MaintenanceStatus = 'pending' | 'in_progress' | 'completed'
 export type FollowUpType = 'phone' | 'visit' | 'wechat'
 export type RelocationType = 'relocate_out' | 'relocate_in'
 export type RelocationStatus = 'pending' | 'approved' | 'in_progress' | 'completed'
-export type FeeType = 'management' | 'maintenance' | 'burial' | 'inscription' | 'relocation'
+export type FeeType = 'management' | 'maintenance' | 'burial' | 'inscription' | 'relocation' | 'contract'
 export type FeeStatus = 'unpaid' | 'partial' | 'paid' | 'overdue'
 
 export interface CemeteryArea {
@@ -43,23 +43,6 @@ export interface CemeteryPlot {
   contractId?: string
   saleDate?: string
   burialDate?: string
-}
-
-export interface SalesContract {
-  id: string
-  contractNo: string
-  plotId: string
-  plotPosition: string
-  buyerName: string
-  buyerPhone: string
-  buyerIdCard: string
-  deceasedName?: string
-  price: number
-  paymentMethod: PaymentMethod
-  paidAmount: number
-  status: ContractStatus
-  signingDate: string
-  notes?: string
 }
 
 export interface InscriptionInfo {
@@ -134,6 +117,26 @@ export interface RelocationInfo {
   reason: string
   status: RelocationStatus
   fee: number
+  requestDate?: string
+  completedDate?: string
+  remark?: string
+}
+
+export interface PaymentPlanItem {
+  id: string
+  dueDate: string
+  amount: number
+  status: 'unpaid' | 'paid'
+  paidDate?: string
+  paidAmount?: number
+}
+
+export interface ContractPaymentEntry {
+  id: string
+  amount: number
+  date: string
+  relatedPlanId?: string
+  remainingAfter: number
 }
 
 export interface CustomerRecord {
@@ -153,6 +156,7 @@ export interface PaymentHistoryEntry {
   id: string
   amount: number
   date: string
+  remainingAfter?: number
 }
 
 export interface FeeRecord {
@@ -160,6 +164,7 @@ export interface FeeRecord {
   plotId: string
   plotPosition: string
   contractNo: string
+  buyerName?: string
   feeType: FeeType
   amount: number
   dueDate: string
@@ -168,4 +173,23 @@ export interface FeeRecord {
   status: FeeStatus
   reminderSent: boolean
   paymentHistory: PaymentHistoryEntry[]
+}
+
+export interface SalesContract {
+  id: string
+  contractNo: string
+  plotId: string
+  plotPosition: string
+  buyerName: string
+  buyerPhone: string
+  buyerIdCard: string
+  deceasedName?: string
+  price: number
+  paymentMethod: PaymentMethod
+  paidAmount: number
+  status: ContractStatus
+  signingDate: string
+  notes?: string
+  paymentPlan: PaymentPlanItem[]
+  paymentHistory: ContractPaymentEntry[]
 }
