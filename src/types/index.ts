@@ -57,6 +57,8 @@ export interface BurialRecord {
   id: string
   plotId: string
   plotPosition: string
+  contractId?: string
+  buyerName?: string
   deceasedName: string
   deceasedIdCard?: string
   deathDate: string
@@ -126,7 +128,7 @@ export interface PaymentPlanItem {
   id: string
   dueDate: string
   amount: number
-  status: 'unpaid' | 'paid'
+  status: 'unpaid' | 'partial' | 'paid'
   paidDate?: string
   paidAmount?: number
 }
@@ -146,6 +148,7 @@ export interface CustomerRecord {
   plotId: string
   plotPosition: string
   contractNo: string
+  deceasedName?: string
   lastVisitDate?: string
   nextFollowUpDate?: string
   followUpRecords: FollowUpRecord[]

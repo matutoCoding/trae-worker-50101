@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useStore } from '@/store'
 import type { RelocationInfo, RelocationStatus } from '@/types'
 import { maskPhone, generateUniqueId, sanitizeInput } from '@/utils/helpers'
-import { HeadphonesIcon, Search, Phone, MapPin, ArrowRightLeft, Star, Clock, X, User, FileText, Home, Calendar, Edit3, Check } from 'lucide-react'
+import { HeadphonesIcon, Search, Phone, MapPin, ArrowRightLeft, Star, Clock, X, User, FileText, Home, Calendar, Edit3, Check, Flower2 } from 'lucide-react'
 
 const tabs = ['墓园档案查询', '客户回访', '迁墓处理'] as const
 const followTypeLabels: Record<string, string> = { phone: '电话', visit: '上门', wechat: '微信' }
@@ -128,14 +128,30 @@ export default function CustomerService() {
               <thead><tr className="table-header">
                 <th className="px-4 py-3 text-left">合同编号</th><th className="px-4 py-3 text-left">购墓人</th>
                 <th className="px-4 py-3 text-left">联系电话</th><th className="px-4 py-3 text-left">墓位位置</th>
-                <th className="px-4 py-3 text-left">签约日期</th><th className="px-4 py-3 text-left">操作</th>
+                <th className="px-4 py-3 text-left">上次回访</th><th className="px-4 py-3 text-left">操作</th>
               </tr></thead>
               <tbody>{filtered.map(c => (
                 <tr key={c.id} className="table-row">
                   <td className="px-4 py-3 font-medium text-[#1B3A2D]">{c.contractNo}</td>
                   <td className="px-4 py-3">{c.buyerName}</td>
                   <td className="px-4 py-3">{maskPhone(c.buyerPhone)}</td>
-                  <td className="px-4 py-3">{c.plotPosition}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{c.plotPosition}</span>
+                        {c.relocationRequest && (
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${relocStatusBadge[c.relocationRequest.status]}`}>
+                            {relocStatusLabels[c.relocationRequest.status]}
+                          </span>
+                        )}
+                      </div>
+                      {c.relocationRequest && (
+                        <span className="text-xs text-gray-400">
+                          原: {c.relocationRequest.fromPlot} → 目标: {c.relocationRequest.toPlot}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">{c.lastVisitDate || '-'}</td>
                   <td className="px-4 py-3"><button className="text-[#5A8F7B] hover:text-[#1B3A2D] text-sm" onClick={() => setDrawerId(c.id)}>查看详情</button></td>
                 </tr>
@@ -246,6 +262,9 @@ export default function CustomerService() {
               <p><User className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.buyerName}</p>
               <p><Phone className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{maskPhone(drawerCustomer.buyerPhone)}</p>
               <p><FileText className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.contractNo}</p>
+              {drawerCustomer.deceasedName && (
+                <p><Flower2 className="w-3.5 h-3.5 inline mr-2 text-[#C4A35A]" />{drawerCustomer.deceasedName}</p>
+              )}
             </div>
             <div className="space-y-1">
               <p className="text-xs text-gray-400 gold-accent-line inline-block pb-1 mb-2">当前墓位</p>

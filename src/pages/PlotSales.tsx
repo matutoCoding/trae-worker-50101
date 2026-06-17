@@ -524,30 +524,36 @@ export default function PlotSales() {
                         <div className="text-center py-8 text-gray-400 text-sm">暂无分期计划，点击上方"+ 添加分期"开始录入</div>
                       )}
                       {[...selectedContract.paymentPlan].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).map(p => {
-                        const overdue = p.status === 'unpaid' && isBefore(parseISO(p.dueDate), new Date())
+                        const overdue = (p.status === 'unpaid' || p.status === 'partial') && isBefore(parseISO(p.dueDate), new Date())
+                        const partialPaid = p.status === 'partial'
                         return (
-                          <div key={p.id} className={`border rounded-lg p-3 flex items-center justify-between ${overdue ? 'border-red-200 bg-red-50/50' : p.status === 'paid' ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-200 bg-white'}`}>
+                          <div key={p.id} className={`border rounded-lg p-3 flex items-center justify-between ${overdue ? 'border-red-200 bg-red-50/50' : p.status === 'paid' ? 'border-emerald-200 bg-emerald-50/50' : partialPaid ? 'border-sky-200 bg-sky-50/50' : 'border-gray-200 bg-white'}`}>
                             <div className="flex items-center gap-3">
-                              <div className={`w-9 h-9 rounded-full flex items-center justify-center ${p.status === 'paid' ? 'bg-emerald-100' : overdue ? 'bg-red-100' : 'bg-gray-100'}`}>
-                                {p.status === 'paid' ? <Check className="w-4 h-4 text-emerald-600" /> : <Clock className={`w-4 h-4 ${overdue ? 'text-red-600' : 'text-gray-500'}`} />}
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center ${p.status === 'paid' ? 'bg-emerald-100' : partialPaid ? 'bg-sky-100' : overdue ? 'bg-red-100' : 'bg-gray-100'}`}>
+                                {p.status === 'paid' ? <Check className="w-4 h-4 text-emerald-600" /> : <Clock className={`w-4 h-4 ${partialPaid ? 'text-sky-600' : overdue ? 'text-red-600' : 'text-gray-500'}`} />}
                               </div>
                               <div>
                                 <p className="text-sm font-medium text-[#1B3A2D]">
                                   <Calendar className="w-3.5 h-3.5 inline mr-1 text-gray-400" />{fmtDate(p.dueDate)}
                                   {overdue && <span className="text-xs text-red-500 ml-2">已逾期</span>}
+                                  {partialPaid && !overdue && <span className="text-xs text-sky-600 ml-2">部分收款</span>}
                                 </p>
                                 <p className="text-xs text-gray-500">
-                                  {p.status === 'paid' ? `实收¥${(p.paidAmount || 0).toLocaleString()} · ${fmtDate(p.paidDate!)}` : `待收`}
+                                  {p.status === 'paid'
+                                    ? `实收¥${(p.paidAmount || 0).toLocaleString()} · ${fmtDate(p.paidDate!)}`
+                                    : partialPaid
+                                      ? `已收¥${(p.paidAmount || 0).toLocaleString()}，还剩¥${(p.amount - (p.paidAmount || 0)).toLocaleString()}`
+                                      : `待收`}
                                 </p>
                               </div>
                             </div>
                             <div className="flex items-center gap-3">
-                              <p className={`font-semibold ${p.status === 'paid' ? 'text-emerald-600' : overdue ? 'text-red-600' : 'text-[#C4A35A]'}`}>
+                              <p className={`font-semibold ${p.status === 'paid' ? 'text-emerald-600' : partialPaid ? 'text-sky-600' : overdue ? 'text-red-600' : 'text-[#C4A35A]'}`}>
                                 ¥{p.amount.toLocaleString()}
                               </p>
-                              {p.status === 'unpaid' && selectedContract.status !== 'cancelled' && (
-                                <button className="btn-primary text-xs px-2 py-1" onClick={() => { setPaymentForm(f => ({ planId: p.id, amount: p.amount })); setDetailTab('history') }}>
-                                  收款
+                              {(p.status === 'unpaid' || p.status === 'partial') && selectedContract.status !== 'cancelled' && (
+                                <button className="btn-primary text-xs px-2 py-1" onClick={() => { setPaymentForm(f => ({ planId: p.id, amount: p.amount - (p.paidAmount || 0) })); setDetailTab('history') }}>
+                                  {partialPaid ? '补收' : '收款'}
                                 </button>
                               )}
                             </div>
@@ -572,8 +578,8 @@ export default function PlotSales() {
                         <label className="block text-xs text-gray-500 mb-1">关联分期（选填）</label>
                         <select className="select-field text-sm" value={paymentForm.planId} onChange={e => setPaymentForm(f => ({ ...f, planId: e.target.value }))}>
                           <option value="">不关联 - 作为一般收款</option>
-                          {selectedContract.paymentPlan.filter(p => p.status === 'unpaid').map(p => (
-                            <option key={p.id} value={p.id}>第 {fmtDate(p.dueDate)} 期 · ¥{p.amount.toLocaleString()}</option>
+                          {selectedContract.paymentPlan.filter(p => p.status !== 'paid').map(p => (
+                            <option key={p.id} value={p.id}>第 {fmtDate(p.dueDate)} 期 · ¥{(p.amount - (p.paidAmount || 0)).toLocaleString()} {p.status === 'partial' ? '(已部分收款)' : ''}</option>
                           ))}
                         </select>
                       </div>

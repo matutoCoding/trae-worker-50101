@@ -69,15 +69,17 @@ export default function FeeManagement() {
     const now = new Date()
     const all = fees
     const mFe = managementFees
-    const pending = all.filter((f) => ds(f) !== 'paid')
-    const paid = all.filter((f) => f.status === 'paid')
-    const overdue = all.filter((f) => ds(f) === 'overdue')
-    const thisMonth = all.filter((f) => {
+    const oFe = otherFees
+    const pending = mFe.filter((f) => ds(f) !== 'paid')
+    const paid = mFe.filter((f) => f.status === 'paid')
+    const overdue = mFe.filter((f) => ds(f) === 'overdue')
+    const thisMonth = mFe.filter((f) => {
       const d = safeParseDate(f.dueDate)
       return d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && f.status !== 'paid'
     })
     const contractPaidTotal = contracts.reduce((s, c) => s + c.paidAmount, 0)
     const contractTotal = contracts.filter(c => c.status !== 'cancelled').reduce((s, c) => s + c.price, 0)
+    const otherPending = oFe.filter((f) => ds(f) !== 'paid').reduce((s, f) => s + f.amount - f.paidAmount, 0)
     return {
       unpaidTotal: pending.reduce((s, f) => s + f.amount - f.paidAmount, 0),
       paidTotal: paid.reduce((s, f) => s + f.paidAmount, 0),
@@ -86,8 +88,10 @@ export default function FeeManagement() {
       contractPaidTotal,
       contractOutstandingTotal: Math.max(0, contractTotal - contractPaidTotal),
       managementCount: mFe.length,
+      otherPending,
+      otherCount: oFe.length,
     }
-  }, [fees, contracts, managementFees])
+  }, [fees, contracts, managementFees, otherFees])
 
   const renewals = useMemo(() => {
     const now = new Date()
@@ -118,11 +122,12 @@ export default function FeeManagement() {
   const toggleContract = (id: string) => setExpandedContract(expandedContract === id ? null : id)
 
   const managementSummaryCards = [
-    { label: '管理费待收', value: `¥${summary.unpaidTotal.toLocaleString()}`, icon: Wallet, accent: 'bg-amber-500' },
-    { label: '管理费已收', value: `¥${summary.paidTotal.toLocaleString()}`, icon: CheckCircle, accent: 'bg-emerald-500' },
-    { label: '逾期金额', value: `¥${summary.overdueTotal.toLocaleString()}`, icon: AlertTriangle, accent: 'bg-red-500' },
+    { label: '管理费/养护费待收', value: `¥${summary.unpaidTotal.toLocaleString()}`, icon: Wallet, accent: 'bg-amber-500' },
+    { label: '管理费/养护费已收', value: `¥${summary.paidTotal.toLocaleString()}`, icon: CheckCircle, accent: 'bg-emerald-500' },
+    { label: '逾期金额(管理费)', value: `¥${summary.overdueTotal.toLocaleString()}`, icon: AlertTriangle, accent: 'bg-red-500' },
     { label: '本月到期', value: `${summary.thisMonthCount} 笔`, icon: Clock, accent: 'bg-blue-500' },
   ]
+  const otherFeeSummaryCard = { label: '其他费用待收(安葬/刻字/迁墓)', value: `¥${summary.otherPending.toLocaleString()} (${summary.otherCount}笔)`, icon: FileText, accent: 'bg-purple-500' }
   const contractSummaryCards = [
     { label: '合同总金额', value: `¥${contracts.filter(c => c.status !== 'cancelled').reduce((s, c) => s + c.price, 0).toLocaleString()}`, icon: FileText, accent: 'bg-[#C4A35A]' },
     { label: '已收款金额', value: `¥${summary.contractPaidTotal.toLocaleString()}`, icon: CheckCircle, accent: 'bg-emerald-500' },
@@ -165,6 +170,15 @@ export default function FeeManagement() {
             </div>
           </div>
         ))}
+        {activeTab === 'management' && (
+          <div className="card p-5 flex items-start gap-3 col-span-4 md:col-span-4">
+            <div className={`w-1 h-12 rounded-full ${otherFeeSummaryCard.accent} shrink-0`} />
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-sm text-gray-500"><otherFeeSummaryCard.icon className="w-4 h-4" />{otherFeeSummaryCard.label}</div>
+              <div className="mt-1 text-2xl font-bold text-[#1B3A2D]">{otherFeeSummaryCard.value}</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {activeTab === 'management' && (
@@ -217,7 +231,8 @@ export default function FeeManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...managementFees, ...otherFees].map((f) => {
+                  {managementFees.length === 0 && <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-400">暂无管理费 / 养护费记录</td></tr>}
+                  {managementFees.map((f) => {
                     const status = ds(f)
                     return (
                       <tr key={f.id} className="table-row">
@@ -225,7 +240,58 @@ export default function FeeManagement() {
                         <td className="px-3 py-2 whitespace-nowrap">{f.plotPosition}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{f.contractNo}</td>
                         <td className="px-3 py-2">
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${f.feeType === 'management' ? 'bg-blue-50 text-blue-700' : f.feeType === 'maintenance' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${f.feeType === 'management' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
+                            {FEE_TYPE_LABEL[f.feeType]}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">¥{f.amount.toLocaleString()}</td>
+                        <td className={`px-3 py-2 ${f.paidAmount < f.amount ? 'text-amber-600' : 'text-emerald-600'}`}>¥{f.paidAmount.toLocaleString()}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{fmtDate(f.dueDate)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{f.paidDate ? fmtDate(f.paidDate) : '-'}</td>
+                        <td className="px-3 py-2"><span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span></td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setHistoryFee(f)} className="text-sky-600 hover:underline text-xs font-medium flex items-center gap-1">
+                              <History className="w-3 h-3" /> 查看历史
+                            </button>
+                            {f.status !== 'paid' && (
+                              <>
+                                <ArrowRight className="w-3 h-3 text-gray-200" />
+                                <button onClick={() => openPayModal(f)} className="text-[#C4A35A] hover:underline text-xs font-medium">收款</button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card p-6">
+            <h2 className="section-title mb-4">其他费用（安葬费 / 刻字费 / 迁墓费）</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="table-header">
+                    {['客户', '墓位位置', '合同编号', '费用类型', '应缴金额', '已缴金额', '到期日期', '缴费日期', '状态', '操作'].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {otherFees.length === 0 && <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-400">暂无其他费用记录</td></tr>}
+                  {otherFees.map((f) => {
+                    const status = ds(f)
+                    return (
+                      <tr key={f.id} className="table-row">
+                        <td className="px-3 py-2 whitespace-nowrap font-medium">{f.buyerName || '-'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{f.plotPosition}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{f.contractNo}</td>
+                        <td className="px-3 py-2">
+                          <span className="inline-block px-1.5 py-0.5 rounded text-xs bg-purple-50 text-purple-700">
                             {FEE_TYPE_LABEL[f.feeType]}
                           </span>
                         </td>
@@ -271,7 +337,7 @@ export default function FeeManagement() {
               const remaining = c.price - c.paidAmount
               const isExpanded = expandedContract === c.id
               return (
-                <div key={c.id} className={`border rounded-lg overflow-hidden transition-all ${c.status === 'cancelled' ? 'border-gray-200 bg-gray-50 opacity-75' : remaining === 0 ? 'border-emerald-200 bg-emerald-50/30' : remaining > 0 && c.paymentPlan.some(p => p.status === 'unpaid' && safeParseDate(p.dueDate) && differenceInDays(safeParseDate(p.dueDate)!, new Date()) < 0) ? 'border-red-200 bg-red-50/30' : 'border-amber-200 bg-amber-50/30'}`}>
+                <div key={c.id} className={`border rounded-lg overflow-hidden transition-all ${c.status === 'cancelled' ? 'border-gray-200 bg-gray-50 opacity-75' : remaining === 0 ? 'border-emerald-200 bg-emerald-50/30' : remaining > 0 && c.paymentPlan.some(p => (p.status === 'unpaid' || p.status === 'partial') && safeParseDate(p.dueDate) && differenceInDays(safeParseDate(p.dueDate)!, new Date()) < 0) ? 'border-red-200 bg-red-50/30' : 'border-amber-200 bg-amber-50/30'}`}>
                   <div className="p-4 flex items-center justify-between cursor-pointer hover:bg-white/60 transition-colors" onClick={() => toggleContract(c.id)}>
                     <div className="flex items-center gap-4">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${c.status === 'completed' ? 'bg-emerald-100' : c.status === 'cancelled' ? 'bg-gray-100' : 'bg-[#C4A35A]/10'}`}>
@@ -340,14 +406,15 @@ export default function FeeManagement() {
                               </tr></thead>
                               <tbody>
                                 {[...c.paymentPlan].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).map(p => {
-                                  const overdue = p.status === 'unpaid' && safeParseDate(p.dueDate) && differenceInDays(safeParseDate(p.dueDate)!, new Date()) < 0
+                                  const overdue = (p.status === 'unpaid' || p.status === 'partial') && safeParseDate(p.dueDate) && differenceInDays(safeParseDate(p.dueDate)!, new Date()) < 0
+                                  const partialPaid = p.status === 'partial'
                                   return (
                                     <tr key={p.id} className="border-t border-gray-100">
                                       <td className="px-3 py-2">{fmtDate(p.dueDate)}</td>
                                       <td className="px-3 py-2 text-right font-medium">¥{p.amount.toLocaleString()}</td>
                                       <td className="px-3 py-2">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${p.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : overdue ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
-                                          {p.status === 'paid' ? '已收' : overdue ? '逾期未收' : '待收'}
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${p.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : partialPaid ? 'bg-sky-50 text-sky-700' : overdue ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                                          {p.status === 'paid' ? '已收' : partialPaid ? '部分收款' : overdue ? '逾期未收' : '待收'}
                                         </span>
                                       </td>
                                       <td className="px-3 py-2 text-right text-emerald-600">{p.paidAmount ? `¥${p.paidAmount.toLocaleString()}` : '-'}</td>

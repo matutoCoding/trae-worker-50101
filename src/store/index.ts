@@ -72,7 +72,13 @@ function loadPersistedData(): AppData | null {
         if (data.contracts && data.contracts.length > 0) {
           data.contracts = data.contracts.map((c: any) => ({
             ...c,
-            paymentPlan: Array.isArray(c.paymentPlan) ? c.paymentPlan : [],
+            paymentPlan: Array.isArray(c.paymentPlan)
+              ? c.paymentPlan.map((p: any) => ({
+                  ...p,
+                  status: (p.status === 'paid' || p.status === 'partial' || p.status === 'unpaid') ? p.status : (p.paidAmount && p.paidAmount >= p.amount ? 'paid' : p.paidAmount > 0 ? 'partial' : 'unpaid'),
+                  paidAmount: typeof p.paidAmount === 'number' ? p.paidAmount : 0,
+                }))
+              : [],
             paymentHistory: Array.isArray(c.paymentHistory) ? c.paymentHistory : (c.paidAmount > 0 && c.signingDate ? [{ id: `migrated-ct-${c.id}`, amount: c.paidAmount, date: c.signingDate, remainingAfter: Math.max(0, c.price - c.paidAmount) }] : []),
           }))
         }
@@ -203,10 +209,17 @@ export const useStore = create<AppState>((set, get) => ({
       if (!burial) return state
       const newBurials = state.burials.map((b) => (b.id === burialId ? { ...b, status } : b))
       let newPlots = state.plots
+      let newCustomers = state.customers
       if (status === 'completed') {
         newPlots = state.plots.map((p) => (p.id === burial.plotId ? { ...p, status: 'buried' as PlotStatus, burialDate: burial.burialDate, deceasedName: burial.deceasedName } : p))
+        const matchContract = state.contracts.find((c) => c.plotId === burial.plotId)
+        if (matchContract) {
+          newCustomers = state.customers.map((c) =>
+            c.contractNo === matchContract.contractNo ? { ...c, deceasedName: burial.deceasedName } : c
+          )
+        }
       }
-      const newState = { burials: newBurials, plots: newPlots }
+      const newState = { burials: newBurials, plots: newPlots, customers: newCustomers }
       persistData({ ...state, ...newState })
       return newState
     }),
@@ -328,9 +341,17 @@ export const useStore = create<AppState>((set, get) => ({
 
   addRelocation: (customerId, info) =>
     set((state) => {
+      const targetPlot = state.plots.find((p) => p.position === info.toPlot)
       const newState = {
         customers: state.customers.map((c) =>
-          c.id === customerId ? { ...c, relocationRequest: info } : c
+          c.id === customerId
+            ? {
+                ...c,
+                relocationRequest: info,
+                plotId: targetPlot ? targetPlot.id : c.plotId,
+                plotPosition: targetPlot ? targetPlot.position : c.plotPosition,
+              }
+            : c
         ),
       }
       persistData({ ...state, ...newState })
@@ -455,11 +476,12 @@ export const useStore = create<AppState>((set, get) => ({
         }
         let newPlan = c.paymentPlan
         if (planId) {
-          newPlan = newPlan.map((p) =>
-            p.id === planId
-              ? { ...p, status: 'paid' as const, paidDate: today, paidAmount: (p.paidAmount || 0) + amount }
-              : p
-          )
+          newPlan = newPlan.map((p) => {
+            if (p.id !== planId) return p
+            const accumulated = (p.paidAmount || 0) + amount
+            const nextStatus: 'unpaid' | 'partial' | 'paid' = accumulated >= p.amount ? 'paid' : accumulated > 0 ? 'partial' : 'unpaid'
+            return { ...p, status: nextStatus, paidDate: nextStatus === 'paid' ? today : p.paidDate, paidAmount: accumulated }
+          })
         }
         return {
           ...c,

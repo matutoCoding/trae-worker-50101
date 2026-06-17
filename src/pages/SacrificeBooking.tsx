@@ -1,8 +1,10 @@
 import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
-import { clampNumber, generateUniqueId, maskPhone } from '@/utils/helpers'
-import { Flame, Calendar, Users, Clock, Plus, Check, X, Camera } from 'lucide-react'
+import { clampNumber, generateUniqueId, maskPhone, sanitizeInput, safeParseDate } from '@/utils/helpers'
+import { Flame, Calendar, Users, Clock, Plus, Check, X, Camera, LayoutGrid, AlertTriangle } from 'lucide-react'
 import type { SacrificeBooking, SacrificeStatus, SacrificeType, ProxyServiceType } from '@/types'
+import { format, eachDayOfInterval, startOfWeek, endOfWeek, isSameDay, addDays, isWeekend } from 'date-fns'
+import { zhCN } from 'date-fns/locale'
 
 const STATUS_MAP: Record<SacrificeStatus, { label: string; cls: string }> = {
   pending: { label: '待确认', cls: 'bg-amber-50 text-amber-700' },
@@ -22,19 +24,38 @@ const SERVICE_MAP: Record<ProxyServiceType, { label: string; cls: string }> = {
 const TIME_SLOTS = ['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00']
 const MAX_CAPACITY = 20
 
+const HOLIDAYS = [
+  '01-01', '02-10', '02-11', '02-12', '02-13', '02-14', '02-15', '02-16', '02-17',
+  '04-04', '04-05', '04-06', '05-01', '05-02', '05-03', '05-04', '05-05',
+  '06-10', '06-11', '06-12', '09-15', '09-16', '09-17', '10-01', '10-02', '10-03',
+  '10-04', '10-05', '10-06', '10-07', '12-22',
+]
+
+function isHoliday(dateStr: string) {
+  const md = dateStr.slice(5)
+  return HOLIDAYS.includes(md)
+}
+
 export default function SacrificeBooking() {
   const { sacrifices, plots, addSacrifice, updateSacrificeStatus } = useStore()
-  const [tab, setTab] = useState<'booking' | 'proxy'>('booking')
+  const [tab, setTab] = useState<'booking' | 'capacity' | 'proxy'>('booking')
   const [dateFilter, setDateFilter] = useState(new Date().toISOString().split('T')[0])
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }))
   const [typeFilter, setTypeFilter] = useState<'all' | SacrificeType>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | SacrificeStatus>('all')
   const [showModal, setShowModal] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'warn' } | null>(null)
   const [form, setForm] = useState({
     plotId: '', visitorName: '', visitorPhone: '', visitDate: dateFilter,
     timeSlot: TIME_SLOTS[0], visitorCount: 1, type: 'self' as SacrificeType,
     serviceType: 'basic' as ProxyServiceType, flowerRequired: true, incenseRequired: true, specialRequests: '',
   })
+
+  const showToast = (msg: string, type: 'ok' | 'warn' = 'ok') => {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 2500)
+  }
 
   const filtered = useMemo(() => sacrifices.filter(s =>
     (s.visitDate === dateFilter) &&
@@ -42,17 +63,25 @@ export default function SacrificeBooking() {
     (statusFilter === 'all' || s.status === statusFilter)
   ), [sacrifices, dateFilter, typeFilter, statusFilter])
 
+  const getSlotCount = (date: string, slot: string) =>
+    sacrifices.filter(s => s.visitDate === date && s.timeSlot === slot && s.status !== 'cancelled').length
+
+  const getSlotProxyCount = (date: string, slot: string) =>
+    sacrifices.filter(s => s.visitDate === date && s.timeSlot === slot && s.status !== 'cancelled' && s.type === 'proxy').length
+
   const slotCounts = useMemo(() => {
     const m: Record<string, number> = {}
-    TIME_SLOTS.forEach(t => m[t] = 0)
-    sacrifices.filter(s => s.visitDate === dateFilter && s.status !== 'cancelled').forEach(s => { if (TIME_SLOTS.includes(s.timeSlot)) m[s.timeSlot] = (m[s.timeSlot] || 0) + 1 })
+    TIME_SLOTS.forEach(t => m[t] = getSlotCount(dateFilter, t))
     return m
   }, [sacrifices, dateFilter])
 
   const proxyBookings = useMemo(() => sacrifices.filter(s => s.type === 'proxy' && s.proxyService), [sacrifices])
 
+  const weekDays = useMemo(() => eachDayOfInterval({ start: weekStart, end: endOfWeek(weekStart, { weekStartsOn: 1 }) }), [weekStart])
+
   const slotBarColor = (count: number) => {
     const pct = count / MAX_CAPACITY
+    if (pct >= 1) return 'bg-red-600'
     if (pct > 0.8) return 'bg-red-500'
     if (pct > 0.5) return 'bg-amber-500'
     return 'bg-emerald-500'
@@ -61,33 +90,48 @@ export default function SacrificeBooking() {
   const handleAdd = () => {
     if (saving) return
     const plot = plots.find(p => p.id === form.plotId)
-    const name = form.visitorName.trim()
-    const phone = form.visitorPhone.trim()
-    if (!plot || !name || !phone || !/^\d{7,}$/.test(phone)) return
+    const name = sanitizeInput(form.visitorName.trim())
+    const phone = sanitizeInput(form.visitorPhone.trim())
+    if (!plot || !name || !phone || !/^\d{7,}$/.test(phone)) {
+      showToast('请完整填写墓位、预约人姓名和有效电话', 'warn')
+      return
+    }
+    const currentCount = getSlotCount(form.visitDate, form.timeSlot)
+    if (currentCount >= MAX_CAPACITY) {
+      showToast(`${form.visitDate} ${form.timeSlot} 时段已预约满(${MAX_CAPACITY}/${MAX_CAPACITY})，请选择其他时段`, 'warn')
+      return
+    }
     setSaving(true)
     const booking: SacrificeBooking = {
       id: generateUniqueId(), plotId: form.plotId, plotPosition: plot.position,
       visitorName: name, visitorPhone: phone,
       visitDate: form.visitDate, timeSlot: form.timeSlot, visitorCount: form.visitorCount,
       type: form.type, status: 'pending',
-      ...(form.type === 'proxy' ? { proxyService: { serviceType: form.serviceType, flowerRequired: form.flowerRequired, incenseRequired: form.incenseRequired, specialRequests: form.specialRequests || undefined } } : {}),
+      ...(form.type === 'proxy' ? { proxyService: { serviceType: form.serviceType, flowerRequired: form.flowerRequired, incenseRequired: form.incenseRequired, specialRequests: sanitizeInput(form.specialRequests) || undefined } } : {}),
     }
     addSacrifice(booking)
     setShowModal(false)
     setSaving(false)
+    showToast(`预约成功！${form.visitDate} ${form.timeSlot} 剩余${MAX_CAPACITY - currentCount - 1}个名额`)
     setForm({ plotId: '', visitorName: '', visitorPhone: '', visitDate: dateFilter, timeSlot: TIME_SLOTS[0], visitorCount: 1, type: 'self', serviceType: 'basic', flowerRequired: true, incenseRequired: true, specialRequests: '' })
   }
 
   return (
-    <div className="p-6 min-h-screen bg-cream">
+    <div className="p-6 min-h-screen bg-cream relative">
       <div className="flex items-center gap-3 mb-6">
         <Flame className="w-6 h-6 text-gold" />
         <h1 className="text-2xl font-bold text-primary font-serif">祭扫预约</h1>
       </div>
 
-      <div className="flex gap-1 mb-6 border-b border-border">
-        {([['booking', '祭扫预约', Calendar], ['proxy', '代客祭扫', Users]] as const).map(([key, label, Icon]) => (
-          <button key={key} onClick={() => setTab(key as 'booking' | 'proxy')}
+      {toast && (
+        <div className={`fixed top-6 right-6 z-[100] px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium ${toast.type === 'ok' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {toast.msg}
+        </div>
+      )}
+
+      <div className="flex gap-1 mb-6 border-b border-border flex-wrap">
+        {([['booking', '祭扫预约', Calendar], ['capacity', '容量分流', LayoutGrid], ['proxy', '代客祭扫', Users]] as const).map(([key, label, Icon]) => (
+          <button key={key} onClick={() => setTab(key as 'booking' | 'capacity' | 'proxy')}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === key ? 'border-gold text-primary' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
             <Icon className="w-4 h-4" />{label}
           </button>
@@ -112,18 +156,25 @@ export default function SacrificeBooking() {
           </div>
 
           <div className="card p-4 mb-6">
-            <h3 className="section-title flex items-center gap-2 mb-3"><Clock className="w-4 h-4" />时段容量</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="section-title flex items-center gap-2 mb-0"><Clock className="w-4 h-4" />{dateFilter} 时段容量</h3>
+              {isHoliday(dateFilter) && <span className="text-xs bg-red-50 text-red-600 px-2 py-1 rounded border border-red-200">节假日高峰</span>}
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {TIME_SLOTS.map(slot => {
                 const count = slotCounts[slot] || 0
                 const pct = Math.min(count / MAX_CAPACITY * 100, 100)
+                const full = count >= MAX_CAPACITY
                 return (
-                  <div key={slot} className="border border-border rounded-lg p-3">
-                    <div className="text-xs text-gray-500 mb-1">{slot}</div>
+                  <div key={slot} className={`border rounded-lg p-3 ${full ? 'border-red-300 bg-red-50/50' : 'border-border'}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-gray-500">{slot}</span>
+                      {full && <AlertTriangle className="w-3 h-3 text-red-500" />}
+                    </div>
                     <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-1">
                       <div className={`h-full rounded-full transition-all ${slotBarColor(count)}`} style={{ width: `${pct}%` }} />
                     </div>
-                    <div className="text-xs text-gray-400">{count}/{MAX_CAPACITY}</div>
+                    <div className={`text-xs ${full ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>{count}/{MAX_CAPACITY} {full ? '已满' : ''}</div>
                   </div>
                 )
               })}
@@ -158,9 +209,9 @@ export default function SacrificeBooking() {
                     <td className="px-4 py-3"><span className={`badge ${STATUS_MAP[s.status].cls}`}>{STATUS_MAP[s.status].label}</span></td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        {s.status === 'pending' && <button onClick={() => updateSacrificeStatus(s.id, 'confirmed')} className="btn-ghost text-xs px-2 py-1 text-emerald-600" title="确认"><Check className="w-3.5 h-3.5" /></button>}
-                        {s.status === 'confirmed' && <button onClick={() => updateSacrificeStatus(s.id, 'completed')} className="btn-ghost text-xs px-2 py-1 text-blue-600" title="完成"><Check className="w-3.5 h-3.5" /></button>}
-                        {(s.status === 'pending' || s.status === 'confirmed') && <button onClick={() => updateSacrificeStatus(s.id, 'cancelled')} className="btn-ghost text-xs px-2 py-1 text-red-500" title="取消"><X className="w-3.5 h-3.5" /></button>}
+                        {s.status === 'pending' && <button onClick={() => { updateSacrificeStatus(s.id, 'confirmed'); showToast('已确认') }} className="btn-ghost text-xs px-2 py-1 text-emerald-600" title="确认"><Check className="w-3.5 h-3.5" /></button>}
+                        {s.status === 'confirmed' && <button onClick={() => { updateSacrificeStatus(s.id, 'completed'); showToast('已完成') }} className="btn-ghost text-xs px-2 py-1 text-blue-600" title="完成"><Check className="w-3.5 h-3.5" /></button>}
+                        {(s.status === 'pending' || s.status === 'confirmed') && <button onClick={() => { updateSacrificeStatus(s.id, 'cancelled'); showToast('已取消', 'warn') }} className="btn-ghost text-xs px-2 py-1 text-red-500" title="取消"><X className="w-3.5 h-3.5" /></button>}
                       </div>
                     </td>
                   </tr>
@@ -169,6 +220,107 @@ export default function SacrificeBooking() {
             </table>
           </div>
         </>
+      )}
+
+      {tab === 'capacity' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="btn-ghost text-xs">← 上一周</button>
+              <span className="font-semibold text-primary">{format(weekStart, 'yyyy年M月d日')} - {format(endOfWeek(weekStart, { weekStartsOn: 1 }), 'M月d日')}</span>
+              <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="btn-ghost text-xs">下一周 →</button>
+              <button onClick={() => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="btn-secondary text-xs">本周</button>
+            </div>
+            <div className="text-xs text-gray-500 flex items-center gap-3">
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></span>宽松</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-500 rounded-full"></span>较满</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full"></span>紧张</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-700 rounded-full"></span>已满</span>
+            </div>
+          </div>
+
+          <div className="card p-0 overflow-hidden">
+            <div className="grid grid-cols-8 border-b border-border bg-gray-50">
+              <div className="p-3 text-xs font-medium text-gray-500 text-center">时段</div>
+              {weekDays.map(d => {
+                const ds = format(d, 'yyyy-MM-dd')
+                const holiday = isHoliday(ds)
+                const weekend = isWeekend(d)
+                return (
+                  <div key={ds} className={`p-3 text-center border-l border-border ${holiday || weekend ? 'bg-red-50' : ''}`}>
+                    <div className="text-xs text-gray-500">{format(d, 'EEE', { locale: zhCN })}</div>
+                    <div className={`font-semibold ${holiday ? 'text-red-600' : 'text-primary'}`}>{format(d, 'M/d')}</div>
+                    {holiday && <div className="text-[10px] text-red-500 mt-0.5">节假日</div>}
+                  </div>
+                )
+              })}
+            </div>
+            {TIME_SLOTS.map(slot => (
+              <div key={slot} className="grid grid-cols-8 border-b border-border last:border-b-0">
+                <div className="p-3 text-xs font-medium text-gray-600 flex items-center justify-center border-r border-border bg-gray-50/50">{slot}</div>
+                {weekDays.map(d => {
+                  const ds = format(d, 'yyyy-MM-dd')
+                  const count = getSlotCount(ds, slot)
+                  const proxyCount = getSlotProxyCount(ds, slot)
+                  const selfCount = count - proxyCount
+                  const pct = Math.min(count / MAX_CAPACITY * 100, 100)
+                  const full = count >= MAX_CAPACITY
+                  return (
+                    <div key={ds + slot} className={`p-2 border-l border-border ${full ? 'bg-red-50' : ''}`}>
+                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-1.5">
+                        <div className={`h-full rounded-full ${slotBarColor(count)}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className={`text-center text-xs font-semibold ${full ? 'text-red-600' : count > MAX_CAPACITY * 0.8 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                        {count}/{MAX_CAPACITY}
+                      </div>
+                      {count > 0 && (
+                        <div className="flex justify-center gap-1 mt-1 text-[10px]">
+                          {selfCount > 0 && <span className="text-sky-600 bg-sky-50 px-1 rounded">自{selfCount}</span>}
+                          {proxyCount > 0 && <span className="text-purple-600 bg-purple-50 px-1 rounded">代{proxyCount}</span>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+
+          <div className="card p-4">
+            <h3 className="section-title mb-3">本周代客祭扫任务分布</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="table-header">
+                  <th className="text-left px-3 py-2">日期</th>
+                  {TIME_SLOTS.map(s => <th key={s} className="text-center px-3 py-2">{s}</th>)}
+                  <th className="text-right px-3 py-2">合计</th>
+                </tr></thead>
+                <tbody>
+                  {weekDays.map(d => {
+                    const ds = format(d, 'yyyy-MM-dd')
+                    const perSlot = TIME_SLOTS.map(s => getSlotProxyCount(ds, s))
+                    const total = perSlot.reduce((a, b) => a + b, 0)
+                    const holiday = isHoliday(ds)
+                    return (
+                      <tr key={ds} className={`table-row ${holiday ? 'bg-red-50/30' : ''}`}>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className="font-medium text-primary">{ds}</span>
+                          {holiday && <span className="ml-1 text-[10px] text-red-500">节假日</span>}
+                        </td>
+                        {perSlot.map((n, i) => (
+                          <td key={i} className="px-3 py-2 text-center">
+                            {n > 0 ? <span className="inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 text-xs bg-purple-50 text-purple-700 rounded-full font-medium">{n}</span> : <span className="text-gray-300">-</span>}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 text-right font-semibold text-primary">{total}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       )}
 
       {tab === 'proxy' && (
@@ -180,7 +332,7 @@ export default function SacrificeBooking() {
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="font-medium text-charcoal">{s.plotPosition}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">委托人：{s.visitorName} · {maskPhone(s.visitorPhone)}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">委托人：{s.visitorName} · {maskPhone(s.visitorPhone)} · {s.visitDate} {s.timeSlot}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`badge ${SERVICE_MAP[s.proxyService.serviceType].cls}`}>{SERVICE_MAP[s.proxyService.serviceType].label}</span>
@@ -200,7 +352,7 @@ export default function SacrificeBooking() {
               )}
               {s.status !== 'completed' && s.status !== 'cancelled' && (
                 <div className="flex justify-end mt-2">
-                  <button onClick={() => updateSacrificeStatus(s.id, 'completed')} className="btn-primary text-xs flex items-center gap-1"><Check className="w-3.5 h-3.5" />完成服务</button>
+                  <button onClick={() => { updateSacrificeStatus(s.id, 'completed'); showToast('代客祭扫服务已完成') }} className="btn-primary text-xs flex items-center gap-1"><Check className="w-3.5 h-3.5" />完成服务</button>
                 </div>
               )}
             </div>
@@ -218,7 +370,16 @@ export default function SacrificeBooking() {
               <div><label className="text-xs text-gray-500 mb-1 block">联系电话</label><input value={form.visitorPhone} onChange={e => setForm({ ...form, visitorPhone: e.target.value })} className="input-field" placeholder="请输入电话" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs text-gray-500 mb-1 block">日期</label><input type="date" value={form.visitDate} onChange={e => setForm({ ...form, visitDate: e.target.value })} className="input-field" /></div>
-                <div><label className="text-xs text-gray-500 mb-1 block">时段</label><select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="select-field">{TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">时段</label>
+                  <select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="select-field">
+                    {TIME_SLOTS.map(t => {
+                      const cnt = getSlotCount(form.visitDate, t)
+                      const full = cnt >= MAX_CAPACITY
+                      return <option key={t} value={t} disabled={full}>{t} {full ? `(已满${cnt}/${MAX_CAPACITY})` : `(${cnt}/${MAX_CAPACITY})`}</option>
+                    })}
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs text-gray-500 mb-1 block">人数</label><input type="number" min={1} max={20} value={form.visitorCount} onChange={e => setForm({ ...form, visitorCount: clampNumber(Number(e.target.value), 1, 20) })} className="input-field" /></div>
